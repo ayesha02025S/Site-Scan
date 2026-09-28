@@ -49,7 +49,7 @@ Each empty folder contains `.gitkeep` so Git includes it in the repository. Remo
 
    Replace placeholders locally when the database is configured. The template does not provision PostgreSQL or automatically load environment variables. Backend initialization must add that loading behavior.
 
-## Application initialization — once per team
+## Application initialization, once per team
 
 Assign owners to initialize the applications and commit the generated source and dependency files before teammates use the startup commands below.
 
