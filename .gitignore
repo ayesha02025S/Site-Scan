@@ -29,3 +29,7 @@ htmlcov/
 Thumbs.db
 .idea/
 .vscode/
+
+*.db-*
+*.sqlite-*
+*.sqlite3-*
