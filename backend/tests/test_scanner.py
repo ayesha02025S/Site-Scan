@@ -3,7 +3,14 @@ import socket
 
 import pytest
 
-from scanner import PublicResolver, ScanError, analyze, public_ip, validate_url
+from scanner import (
+    PublicResolver,
+    ScanError,
+    analyze,
+    extract_links,
+    public_ip,
+    validate_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -218,7 +225,7 @@ def test_bounded_fetch_returns_real_analysis(monkeypatch):
     report = asyncio.run(scan_page("https://example.com"))
     assert report["title"] == "Fixture"
     assert report["http_status"] == 200
-    assert len(report["checks"]) == 12
+    assert len(report["checks"]) == 13
 
 
 def test_https_downgrade_is_reported(monkeypatch):
@@ -236,3 +243,42 @@ def test_https_downgrade_is_reported(monkeypatch):
     check = next(item for item in report["checks"] if item["id"] == "https")
     assert check["status"] == "failed"
     assert "stayed on HTTPS: no" in check["evidence"]
+
+
+def test_extract_links_filters_and_dedupes():
+    html = (
+        '<a href="/about">A</a><a href="/about#team">B</a><a href="#top">C</a>'
+        '<a href="mailto:x@example.com">D</a><a href="http://127.0.0.1/admin">E</a>'
+        '<a href="https://other.example.org/page">F</a><a href="javascript:void(0)">G</a>'
+    )
+    assert extract_links(html, "https://example.com/") == [
+        "https://example.com/about",
+        "https://other.example.org/page",
+    ]
+
+
+def test_broken_links_check():
+    args = ("https://example.com", "https://example.com", 200, {}, "<html></html>", 100, 100, 0)
+    assert len(analyze(*args)["checks"]) == 12
+    clean = analyze(
+        *args, links={"found": 3, "checked": 3, "broken": [], "unverified": 0}
+    )
+    check = next(c for c in clean["checks"] if c["id"] == "broken-links")
+    assert check["status"] == "passed" and check["category"] == "performance"
+    report = analyze(
+        *args,
+        links={
+            "found": 4,
+            "checked": 3,
+            "broken": [
+                {"url": "https://example.com/gone", "status": 404},
+                {"url": "https://dead.example", "status": 0},
+            ],
+            "unverified": 1,
+        },
+    )
+    check = next(c for c in report["checks"] if c["id"] == "broken-links")
+    assert check["status"] == "failed"
+    assert "2 of 3" in check["evidence"] and "HTTP 404" in check["evidence"]
+    assert "unreachable" in check["evidence"] and "1 links could not" in check["evidence"]
+    assert report["scores"]["performance"] < clean["scores"]["performance"]
