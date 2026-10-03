@@ -8,7 +8,7 @@ flowchart LR
     API --> Tasks[Bounded in-process scan tasks]
     Tasks --> Resolver[Public-only DNS resolver]
     Resolver --> Website[Single public HTML page]
-    Website --> Checks[12 deterministic checks]
+    Website --> Checks[13 deterministic checks]
     Checks --> DB
 ```
 

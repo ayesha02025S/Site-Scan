@@ -10,6 +10,7 @@ from aiohttp.abc import AbstractResolver
 from bs4 import BeautifulSoup
 
 MAX_BYTES = 2 * 1024 * 1024
+MAX_LINKS = 20
 
 
 class ScanError(ValueError):
@@ -90,6 +91,76 @@ class PublicResolver(AbstractResolver):
         pass
 
 
+def extract_links(html, base_url):
+    soup = BeautifulSoup(html, "html.parser")
+    page = urlsplit(base_url)._replace(fragment="").geturl()
+    links = []
+    for anchor in soup.find_all("a", href=True):
+        absolute = urljoin(base_url, anchor["href"].strip())
+        if urlsplit(absolute).scheme not in ("http", "https"):
+            continue
+        try:
+            absolute = validate_url(absolute)
+        except ScanError:
+            continue
+        if absolute != page and absolute not in links:
+            links.append(absolute)
+    return links
+
+
+async def check_link(client, url):
+    try:
+        for _ in range(4):
+            async with client.get(url, allow_redirects=False) as response:
+                status = response.status
+                location = response.headers.get("Location")
+            if status in (301, 302, 303, 307, 308) and location:
+                url = validate_url(urljoin(url, location))
+                continue
+            return status
+        return None
+    except (ScanError, aiohttp.ClientSSLError):
+        return None
+    except aiohttp.ClientConnectorError:
+        return 0
+    except (aiohttp.ClientError, OSError, ValueError, TimeoutError):
+        return None
+
+
+async def check_links(links, budget=8):
+    links = links[:MAX_LINKS]
+    if not links:
+        return {"found": 0, "checked": 0, "broken": [], "unverified": 0}
+    connector = aiohttp.TCPConnector(
+        resolver=PublicResolver(), use_dns_cache=False, limit=8, limit_per_host=4
+    )
+    async with aiohttp.ClientSession(
+        connector=connector,
+        timeout=aiohttp.ClientTimeout(total=6),
+        cookie_jar=aiohttp.DummyCookieJar(),
+        trust_env=False,
+        headers={"User-Agent": "SiteScan/0.1 (link check)"},
+    ) as client:
+        jobs = {asyncio.create_task(check_link(client, link)): link for link in links}
+        done, waiting = await asyncio.wait(jobs, timeout=budget)
+        for job in waiting:
+            job.cancel()
+        await asyncio.gather(*waiting, return_exceptions=True)
+    statuses = {jobs[job]: job.result() for job in done}
+    broken = [
+        {"url": link, "status": statuses[link]}
+        for link in links
+        if statuses.get(link) is not None
+        and (statuses[link] in (0, 404, 410) or statuses[link] >= 500)
+    ]
+    return {
+        "found": len(links),
+        "checked": sum(status is not None for status in statuses.values()),
+        "broken": broken,
+        "unverified": len(links) - sum(s is not None for s in statuses.values()),
+    }
+
+
 def analyze(
     url,
     final_url,
@@ -100,6 +171,7 @@ def analyze(
     size,
     redirects,
     secure_chain=True,
+    links=None,
 ):
     soup = BeautifulSoup(html, "html.parser")
     checks = []
@@ -200,6 +272,32 @@ def analyze(
         f"{round(size / 1024, 1):,} KB of decoded HTML. Target: 300 KB or less; images and scripts are excluded.",
         "Reduce unnecessary HTML and inline data, and paginate large documents.",
     )
+    if links is not None:
+        broken = links["broken"]
+        listed = ", ".join(
+            f'{item["url"][:120]} ({"unreachable" if item["status"] == 0 else "HTTP " + str(item["status"])})'
+            for item in broken[:5]
+        )
+        evidence = (
+            f'{len(broken)} of {links["checked"]} checked links are broken'
+            + (f": {listed}" if listed else "")
+            + (f" and {len(broken) - 5} more" if len(broken) > 5 else "")
+            + "."
+        )
+        if links["unverified"]:
+            evidence += f' {links["unverified"]} links could not be verified in time and were not counted.'
+        if not links["found"]:
+            evidence = "No HTTP or HTTPS links were found on this page."
+        add(
+            "broken-links",
+            "performance",
+            "Broken links",
+            not broken,
+            "medium",
+            evidence
+            + f" Up to {MAX_LINKS} unique links are checked; 404, 410, 5xx, and unreachable hosts count as broken.",
+            "Update or remove links that point to missing pages, failing servers, or domains that no longer resolve.",
+        )
     images = soup.find_all("img")
     missing_alt = [img for img in images if not img.has_attr("alt")]
     add(
@@ -341,7 +439,7 @@ async def scan_page(url):
                             html = body.decode(charset, errors="replace")
                         except LookupError:
                             html = body.decode("utf-8", errors="replace")
-                        return analyze(
+                        page = (
                             url,
                             str(response.url),
                             response.status,
@@ -352,7 +450,13 @@ async def scan_page(url):
                             redirects,
                             secure_chain,
                         )
-                raise ScanError("The website exceeded the limit of five redirects.")
+                        break
+                else:
+                    raise ScanError(
+                        "The website exceeded the limit of five redirects."
+                    )
+            links = await check_links(extract_links(page[4], page[1]))
+            return analyze(*page, links=links)
     except ScanError:
         raise
     except (aiohttp.ClientConnectorCertificateError, aiohttp.ClientSSLError):
