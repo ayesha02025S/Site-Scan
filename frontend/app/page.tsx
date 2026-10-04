@@ -12,6 +12,7 @@ import {
   Clock3,
   Crosshair,
   ExternalLink,
+  GitCompareArrows,
   FileText,
   Globe2,
   Layers3,
@@ -133,6 +134,32 @@ export default function Home() {
   const pending = scan?.status === "queued" || scan?.status === "running";
   const issues =
     result?.checks.filter((check) => check.status === "failed") || [];
+  const previous =
+    scan && result
+      ? scans.find(
+          (item) =>
+            item.url === scan.url &&
+            item.status === "completed" &&
+            item.result &&
+            new Date(item.created_at) < new Date(scan.created_at),
+        )
+      : undefined;
+  const comparison = (() => {
+    if (!result || !previous?.result) return null;
+    const before = new Map(
+      previous.result.checks.map((check) => [check.id, check.status]),
+    );
+    const after = new Map(result.checks.map((check) => [check.id, check]));
+    return {
+      delta: result.score - previous.result.score,
+      introduced: issues.filter((check) => before.get(check.id) !== "failed"),
+      resolved: previous.result.checks.filter(
+        (check) =>
+          check.status === "failed" && after.get(check.id)?.status === "passed",
+      ),
+      ongoing: issues.filter((check) => before.get(check.id) === "failed"),
+    };
+  })();
   const checks = (result?.checks || []).filter(
     (check) =>
       (filter === "all" || check.category === filter) &&
@@ -420,10 +447,13 @@ export default function Home() {
                 <h2>What a scan measures</h2>
               </div>
               <p>
-                Site Scan fetches one public HTML page and runs 12 deterministic
+                Site Scan fetches one public HTML page and runs 13 deterministic
                 checks. It follows up to five redirects, verifies HTTPS
-                certificates, and records the final response. It does not
-                execute JavaScript or crawl linked pages.
+                certificates, and records the final response. It checks up to 20
+                links on the page for dead destinations but does not execute
+                JavaScript or crawl linked pages. When a URL has been scanned
+                before, the overview compares the result with the previous
+                completed scan.
               </p>
               <div className="method-grid">
                 {categories.map((category) => (
@@ -432,7 +462,7 @@ export default function Home() {
                     <h3>{descriptions[category]}</h3>
                     <p>
                       {category === "performance"
-                        ? "HTTP success, an HTML fetch time of at most 1,500 ms, and a decoded HTML size of at most 300 KB. Fetch time includes redirects; it is not Core Web Vitals or a browser load time."
+                        ? "HTTP success, an HTML fetch time of at most 1,500 ms, a decoded HTML size of at most 300 KB, and no broken links (404, 410, 5xx, or unreachable host). Fetch time includes redirects; it is not Core Web Vitals or a browser load time."
                         : category === "accessibility"
                           ? "Page title and document language presence, image alt attributes, and detectable form labels in static HTML. These checks do not establish WCAG compliance or assess text quality."
                           : "HTTPS use, Content Security Policy presence, HSTS with positive max-age, X-Content-Type-Options: nosniff, and Referrer-Policy presence. Header presence alone does not establish secure configuration."}
@@ -707,6 +737,75 @@ export default function Home() {
                           Export JSON
                         </a>
                       </div>
+                      {comparison && previous && (
+                        <section
+                          className="comparison panel"
+                          aria-label="Changes since previous scan"
+                        >
+                          <div className="section-heading">
+                            <GitCompareArrows size={15} />
+                            <h2>Since the previous scan</h2>
+                            <span className="mono muted">
+                              {dateLabel(previous.created_at)}
+                            </span>
+                            <button
+                              className="text-button"
+                              onClick={() => selectScan(previous)}
+                            >
+                              Open previous
+                              <ArrowUpRight size={13} />
+                            </button>
+                          </div>
+                          <div className="comparison-grid">
+                            <div>
+                              <span className="eyebrow">SCORE CHANGE</span>
+                              <strong
+                                className={
+                                  comparison.delta > 0
+                                    ? "good"
+                                    : comparison.delta < 0
+                                      ? "bad"
+                                      : "muted"
+                                }
+                              >
+                                {comparison.delta > 0 ? "+" : ""}
+                                {comparison.delta}
+                              </strong>
+                              <small>
+                                {previous.result?.score} → {result.score}
+                              </small>
+                            </div>
+                            {(
+                              [
+                                ["NEW ISSUES", comparison.introduced, "bad"],
+                                ["RESOLVED", comparison.resolved, "good"],
+                                [
+                                  "STILL FAILING",
+                                  comparison.ongoing,
+                                  "warning",
+                                ],
+                              ] as const
+                            ).map(([label, items, toneName]) => (
+                              <div key={label}>
+                                <span className="eyebrow">{label}</span>
+                                <strong
+                                  className={items.length ? toneName : "muted"}
+                                >
+                                  {items.length}
+                                </strong>
+                                <ul>
+                                  {items.map((check) => (
+                                    <li key={check.id}>{check.title}</li>
+                                  ))}
+                                  {!items.length && (
+                                    <li className="muted">None</li>
+                                  )}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      )}
                       <section className="findings panel">
                         <div className="section-heading">
                           <span className="section-number">01</span>
@@ -868,7 +967,7 @@ export default function Home() {
                         })}
                       </div>
                       <div className="empty-bottom">
-                        <span>12 DETERMINISTIC CHECKS</span>
+                        <span>13 DETERMINISTIC CHECKS</span>
                         <span>ONE PAGE. THREE PERSPECTIVES.</span>
                       </div>
                     </div>

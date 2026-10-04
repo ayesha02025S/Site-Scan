@@ -4,7 +4,7 @@ CS 4094
 
 M1: A user enters a URL, Site Scan checks that single page, saves the results, and displays them.
 
-Site Scan is a full-stack website auditing application with a minimal dark interface. M1 implements 12 deterministic performance, accessibility, and security checks, persistent scan history, category scores, expandable findings, and JSON report export.
+Site Scan is a full-stack website auditing application with a minimal dark interface. M1 implements 13 deterministic performance, accessibility, and security checks (including broken link detection), persistent scan history, comparison with the previous scan of the same URL, category scores, expandable findings, and JSON report export.
 
 ## Stack
 
