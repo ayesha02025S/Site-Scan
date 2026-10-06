@@ -33,7 +33,7 @@ from scanner import (
 )
 def test_rejects_unsafe_urls(url):
     if url.endswith("\n"):
-        assert validate_url(url) == "https://example.com"
+        assert validate_url(url) == "https://example.com/"
     else:
         with pytest.raises(ScanError):
             validate_url(url)
@@ -133,7 +133,7 @@ class FakeResponse:
         self.headers = headers if headers is not None else {"Content-Type": "text/html"}
         self.content = FakeContent(body)
         self.charset = "utf-8"
-        self.url = "https://example.com"
+        self.url = "https://example.com/"
 
     async def __aenter__(self):
         return self
@@ -177,7 +177,7 @@ def test_redirect_to_private_destination_never_requested(monkeypatch):
     )
     with pytest.raises(ScanError, match="Private"):
         asyncio.run(scan_page("https://example.com"))
-    assert requests == ["https://example.com"]
+    assert requests == ["https://example.com/"]
 
 
 def test_redirect_limit(monkeypatch):
@@ -225,7 +225,7 @@ def test_bounded_fetch_returns_real_analysis(monkeypatch):
     report = asyncio.run(scan_page("https://example.com"))
     assert report["title"] == "Fixture"
     assert report["http_status"] == 200
-    assert len(report["checks"]) == 13
+    assert len(report["checks"]) == 22
 
 
 def test_https_downgrade_is_reported(monkeypatch):
@@ -258,7 +258,16 @@ def test_extract_links_filters_and_dedupes():
 
 
 def test_broken_links_check():
-    args = ("https://example.com", "https://example.com", 200, {}, "<html></html>", 100, 100, 0)
+    args = (
+        "https://example.com",
+        "https://example.com",
+        200,
+        {},
+        "<html></html>",
+        100,
+        100,
+        0,
+    )
     assert len(analyze(*args)["checks"]) == 12
     clean = analyze(
         *args, links={"found": 3, "checked": 3, "broken": [], "unverified": 0}
@@ -272,13 +281,134 @@ def test_broken_links_check():
             "checked": 3,
             "broken": [
                 {"url": "https://example.com/gone", "status": 404},
-                {"url": "https://dead.example", "status": 0},
+                {"url": "https://example.com/error", "status": 500},
             ],
             "unverified": 1,
         },
     )
     check = next(c for c in report["checks"] if c["id"] == "broken-links")
     assert check["status"] == "failed"
-    assert "2 of 3" in check["evidence"] and "HTTP 404" in check["evidence"]
-    assert "unreachable" in check["evidence"] and "1 links could not" in check["evidence"]
+    assert "2 broken" in check["evidence"] and "3 verified" in check["evidence"]
+    assert "1 inconclusive" in check["evidence"]
     assert report["scores"]["performance"] < clean["scores"]["performance"]
+
+
+@pytest.fixture(autouse=True)
+def no_browser_in_scanner_unit_tests(monkeypatch):
+    from accessibility import unavailable
+
+    async def fake_audit(url):
+        return unavailable("Browser phase mocked by unit test")
+
+    monkeypatch.setattr("accessibility.audit_page", fake_audit)
+
+
+def test_malformed_links_are_skipped_without_losing_valid_links():
+    from scanner import extract_link_targets
+
+    links, skipped = extract_link_targets(
+        '<a href="http://[invalid">bad</a><a href="/working">good</a>',
+        "https://example.com/",
+    )
+    assert links == ["https://example.com/working"]
+    assert skipped == 1
+
+
+def test_url_normalization():
+    assert validate_url("HTTPS://EXAMPLE.COM:443#test") == "https://example.com/"
+    assert validate_url("https://example.com/path/") != validate_url(
+        "https://example.com/path"
+    )
+    assert (
+        validate_url("https://example.com/?b=2&a=1") == "https://example.com/?b=2&a=1"
+    )
+
+
+def test_unverified_links_never_pass_or_earn_points():
+    from scanner import score_checks
+
+    args = (
+        "https://example.com/",
+        "https://example.com/",
+        200,
+        {},
+        "<html></html>",
+        100,
+        100,
+        0,
+    )
+    report = analyze(
+        *args, links={"found": 20, "checked": 0, "broken": [], "unverified": 20}
+    )
+    link = next(c for c in report["checks"] if c["id"] == "broken-links")
+    assert link["status"] == "inconclusive"
+    _, score = score_checks([link])
+    assert score is None
+    assert score_checks([dict(link, status="not_applicable")])[1] is None
+    assert score_checks([dict(link, status="failed"), link])[1] == 0
+
+
+def test_no_links_not_applicable():
+    r = analyze(
+        "https://example.com/",
+        "https://example.com/",
+        200,
+        {},
+        "<html></html>",
+        1,
+        1,
+        0,
+        links={"found": 0, "checked": 0, "broken": [], "unverified": 0},
+    )
+    assert (
+        next(c for c in r["checks"] if c["id"] == "broken-links")["status"]
+        == "not_applicable"
+    )
+
+
+def test_link_cap_preserves_discovered_count(monkeypatch):
+    import scanner
+
+    fake_session(monkeypatch, [])
+
+    async def success(client, url):
+        return 200
+
+    monkeypatch.setattr(scanner, "check_link", success)
+    report = asyncio.run(
+        scanner.check_links([f"https://example.com/{i}" for i in range(25)])
+    )
+    assert report["found"] == 25 and report["checked"] == 20 and report["skipped"] == 5
+
+
+def test_link_timeouts_cancel_tasks(monkeypatch):
+    import scanner
+
+    fake_session(monkeypatch, [])
+    cancelled = []
+
+    async def slow(client, url):
+        try:
+            await asyncio.sleep(5)
+        finally:
+            cancelled.append(url)
+
+    monkeypatch.setattr(scanner, "check_link", slow)
+    report = asyncio.run(scanner.check_links(["https://example.com/a"], budget=0.01))
+    assert report["unverified"] == 1 and report["broken"] == []
+    assert cancelled == ["https://example.com/a"]
+
+
+@pytest.mark.parametrize("status", [401, 403, 408, 429])
+def test_access_and_rate_limits_are_inconclusive(status, monkeypatch):
+    import scanner
+
+    fake_session(monkeypatch, [FakeResponse(status)])
+
+    async def run():
+        async with scanner.aiohttp.ClientSession(
+            connector=scanner.aiohttp.TCPConnector(), trust_env=False
+        ) as client:
+            return await scanner.check_link(client, "https://example.com/")
+
+    assert asyncio.run(run()) is None

@@ -26,35 +26,15 @@ import {
   Zap,
 } from "lucide-react";
 
-type Category = "performance" | "accessibility" | "security";
-type CheckResult = {
-  id: string;
-  category: Category;
-  title: string;
-  status: "passed" | "failed";
-  severity: "high" | "medium" | "low";
-  evidence: string;
-  fix: string;
-};
-type Result = {
-  final_url: string;
-  http_status: number;
-  response_ms: number;
-  size_bytes: number;
-  redirects: number;
-  title: string;
-  scores: Record<Category, number>;
-  score: number;
-  checks: CheckResult[];
-};
-type Scan = {
-  id: string;
-  url: string;
-  status: "queued" | "running" | "completed" | "failed";
-  created_at: string;
-  result: Result | null;
-  error: string | null;
-};
+import {
+  type Category,
+  type Scan,
+  compareResults,
+  previousScan,
+  resultClass,
+  resultLabel,
+} from "../lib/results";
+
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const categories: Category[] = ["performance", "accessibility", "security"];
 const categoryIcons = {
@@ -134,36 +114,18 @@ export default function Home() {
   const pending = scan?.status === "queued" || scan?.status === "running";
   const issues =
     result?.checks.filter((check) => check.status === "failed") || [];
-  const previous =
-    scan && result
-      ? scans.find(
-          (item) =>
-            item.url === scan.url &&
-            item.status === "completed" &&
-            item.result &&
-            new Date(item.created_at) < new Date(scan.created_at),
-        )
-      : undefined;
-  const comparison = (() => {
-    if (!result || !previous?.result) return null;
-    const before = new Map(
-      previous.result.checks.map((check) => [check.id, check.status]),
-    );
-    const after = new Map(result.checks.map((check) => [check.id, check]));
-    return {
-      delta: result.score - previous.result.score,
-      introduced: issues.filter((check) => before.get(check.id) !== "failed"),
-      resolved: previous.result.checks.filter(
-        (check) =>
-          check.status === "failed" && after.get(check.id)?.status === "passed",
-      ),
-      ongoing: issues.filter((check) => before.get(check.id) === "failed"),
-    };
-  })();
+  const previous = scan && result ? previousScan(scans, scan) : undefined;
+  const comparison =
+    result && previous?.result ? compareResults(result, previous.result) : null;
+  const inconclusive =
+    result?.checks.filter((check) => check.status === "inconclusive").length ||
+    0;
   const checks = (result?.checks || []).filter(
     (check) =>
       (filter === "all" || check.category === filter) &&
-      (!onlyIssues || check.status === "failed"),
+      (!onlyIssues ||
+        check.status === "failed" ||
+        check.status === "inconclusive"),
   );
 
   async function refresh(initial = false) {
@@ -447,13 +409,14 @@ export default function Home() {
                 <h2>What a scan measures</h2>
               </div>
               <p>
-                Site Scan fetches one public HTML page and runs 13 deterministic
-                checks. It follows up to five redirects, verifies HTTPS
-                certificates, and records the final response. It checks up to 20
-                links on the page for dead destinations but does not execute
-                JavaScript or crawl linked pages. When a URL has been scanned
-                before, the overview compares the result with the previous
-                completed scan.
+                Site Scan fetches one public HTML page and runs 13 static/link
+                and 9 rendered-page checks. It follows up to five redirects,
+                verifies HTTPS certificates, and records the final response. It
+                checks up to 20 links on the page for dead destinations and
+                renders the submitted page in Chromium for axe-core
+                accessibility checks. It does not crawl linked pages. When a URL
+                has been scanned before, the overview compares the result with
+                the previous completed scan.
               </p>
               <div className="method-grid">
                 {categories.map((category) => (
@@ -462,9 +425,9 @@ export default function Home() {
                     <h3>{descriptions[category]}</h3>
                     <p>
                       {category === "performance"
-                        ? "HTTP success, an HTML fetch time of at most 1,500 ms, a decoded HTML size of at most 300 KB, and no broken links (404, 410, 5xx, or unreachable host). Fetch time includes redirects; it is not Core Web Vitals or a browser load time."
+                        ? "HTTP success, an HTML fetch time of at most 1,500 ms, a decoded HTML size of at most 300 KB, and a bounded link check (404, 410, and 5xx). Unreachable or restricted destinations are inconclusive. Fetch time includes redirects; it is not Core Web Vitals or a browser load time."
                         : category === "accessibility"
-                          ? "Page title and document language presence, image alt attributes, and detectable form labels in static HTML. These checks do not establish WCAG compliance or assess text quality."
+                          ? "Static HTML foundations plus axe-core checks on the rendered page: text color contrast, accessible button names, and valid ARIA roles, attributes, and relationships. A 1280 × 900 Chromium snapshot is evaluated; embedded frames and interaction-dependent states need manual review. These checks do not establish WCAG compliance."
                           : "HTTPS use, Content Security Policy presence, HSTS with positive max-age, X-Content-Type-Options: nosniff, and Referrer-Policy presence. Header presence alone does not establish secure configuration."}
                     </p>
                   </article>
@@ -474,22 +437,24 @@ export default function Home() {
               <p>
                 Within each category, passed checks earn their severity weight:
                 high = 3, medium = 2, low = 1. The category score is the
-                percentage of available weight earned. The overall score is the
-                rounded mean of the three category scores. Scores of 90–100 are
-                labeled “Strong,” 60–89 “Needs attention,” and 0–59 “Action
-                required.” These are project heuristics, not an industry
-                certification.
+                percentage of evaluated weight earned. Inconclusive and
+                not-applicable checks are excluded from the score. The overall
+                score is the rounded mean of the three category scores. Scores
+                of 90–100 are labeled “Strong,” 60–89 “Needs attention,” and
+                0–59 “Action required.” These are project heuristics, not an
+                industry certification.
               </p>
               <h3>Scope and storage</h3>
               <p>
                 Only standard HTTP/HTTPS ports and public destinations are
                 allowed. Private addresses are rejected during DNS resolution
-                and at each redirect. Scans time out after 25 seconds and HTML
-                is limited to 2 MB. Completed and failed scans are saved
-                locally. The history view displays the latest 100 scans. Scans
-                interrupted by a server restart are marked failed. This local
-                prototype has no accounts or authentication; deploy only after
-                adding access controls and durable workers.
+                and at each redirect. Page fetching is limited to 25 seconds and
+                2 MB; link checks have an 8-second budget and browser checks
+                have a separate 35-second deadline. Completed and failed scans
+                are saved locally. The history view displays the latest 100
+                scans. Scans interrupted by a server restart are marked failed.
+                This local prototype has no accounts or authentication; deploy
+                only after adding access controls and durable workers.
               </p>
             </section>
           ) : (
@@ -575,9 +540,11 @@ export default function Home() {
                           <LoaderCircle size={12} className="spin" />
                           {scan.status === "queued"
                             ? "Queued for assessment"
-                            : "Checking response & HTML"}
+                            : "Checking links & rendered accessibility"}
                         </span>
-                        <span>Results appear automatically</span>
+                        <span>
+                          Results appear automatically; rendering takes longer
+                        </span>
                       </div>
                     </div>
                   ) : scan?.status === "failed" ? (
@@ -654,7 +621,14 @@ export default function Home() {
                                 {issues.length} finding
                                 {issues.length === 1 ? "" : "s"} to review
                                 <br />
-                                {result.checks.length} checks completed
+                                {
+                                  result.checks.filter(
+                                    (c) =>
+                                      c.status === "passed" ||
+                                      c.status === "failed",
+                                  ).length
+                                }{" "}
+                                checks evaluated
                               </p>
                             </div>
                           </div>
@@ -699,7 +673,13 @@ export default function Home() {
                                 <span>
                                   {categoryIssues
                                     ? `${categoryIssues} finding${categoryIssues === 1 ? "" : "s"}`
-                                    : "All checks passed"}
+                                    : result.checks.some(
+                                          (c) =>
+                                            c.category === category &&
+                                            c.status === "inconclusive",
+                                        )
+                                      ? "Review incomplete checks"
+                                      : "Evaluated checks passed"}
                                 </span>
                                 <span
                                   className={`small-dot ${tone(result.scores[category])}`}
@@ -737,6 +717,25 @@ export default function Home() {
                           Export JSON
                         </a>
                       </div>
+                      {result.rendered_accessibility && (
+                        <section
+                          className="audit-summary panel"
+                          aria-label="Rendered accessibility status"
+                        >
+                          <div>
+                            <Crosshair size={17} />
+                            <strong>Browser accessibility</strong>
+                            <span className="tag">
+                              {result.rendered_accessibility.status.toUpperCase()}
+                            </span>
+                          </div>
+                          <p>{result.rendered_accessibility.message}</p>
+                          <small>
+                            {inconclusive} checks need review. Inconclusive and
+                            not-applicable checks are excluded from scores.
+                          </small>
+                        </section>
+                      )}
                       {comparison && previous && (
                         <section
                           className="comparison panel"
@@ -756,54 +755,72 @@ export default function Home() {
                               <ArrowUpRight size={13} />
                             </button>
                           </div>
-                          <div className="comparison-grid">
-                            <div>
-                              <span className="eyebrow">SCORE CHANGE</span>
-                              <strong
-                                className={
-                                  comparison.delta > 0
-                                    ? "good"
-                                    : comparison.delta < 0
-                                      ? "bad"
-                                      : "muted"
-                                }
-                              >
-                                {comparison.delta > 0 ? "+" : ""}
-                                {comparison.delta}
-                              </strong>
-                              <small>
-                                {previous.result?.score} → {result.score}
-                              </small>
-                            </div>
-                            {(
-                              [
-                                ["NEW ISSUES", comparison.introduced, "bad"],
-                                ["RESOLVED", comparison.resolved, "good"],
-                                [
-                                  "STILL FAILING",
-                                  comparison.ongoing,
-                                  "warning",
-                                ],
-                              ] as const
-                            ).map(([label, items, toneName]) => (
-                              <div key={label}>
-                                <span className="eyebrow">{label}</span>
+                          {!comparison.compatible ? (
+                            <p className="comparison-notice">
+                              These reports use different or older scanner
+                              versions. Score and issue changes are not
+                              comparable. Run another scan with the current
+                              version to establish a baseline.
+                            </p>
+                          ) : (
+                            <div className="comparison-grid">
+                              <div>
+                                <span className="eyebrow">SCORE CHANGE</span>
                                 <strong
-                                  className={items.length ? toneName : "muted"}
+                                  className={
+                                    comparison.delta !== null &&
+                                    comparison.delta > 0
+                                      ? "good"
+                                      : comparison.delta !== null &&
+                                          comparison.delta < 0
+                                        ? "bad"
+                                        : "muted"
+                                  }
                                 >
-                                  {items.length}
+                                  {comparison.delta !== null &&
+                                  comparison.delta > 0
+                                    ? "+"
+                                    : ""}
+                                  {comparison.delta ?? "—"}
                                 </strong>
-                                <ul>
-                                  {items.map((check) => (
-                                    <li key={check.id}>{check.title}</li>
-                                  ))}
-                                  {!items.length && (
-                                    <li className="muted">None</li>
-                                  )}
-                                </ul>
+                                <small>
+                                  {comparison.delta === null
+                                    ? "Different check coverage"
+                                    : `${previous.result?.score} → ${result.score}`}
+                                </small>
                               </div>
-                            ))}
-                          </div>
+                              {(
+                                [
+                                  ["NEW ISSUES", comparison.introduced, "bad"],
+                                  ["RESOLVED", comparison.resolved, "good"],
+                                  [
+                                    "STILL FAILING",
+                                    comparison.ongoing,
+                                    "warning",
+                                  ],
+                                ] as const
+                              ).map(([label, items, toneName]) => (
+                                <div key={label}>
+                                  <span className="eyebrow">{label}</span>
+                                  <strong
+                                    className={
+                                      items.length ? toneName : "muted"
+                                    }
+                                  >
+                                    {items.length}
+                                  </strong>
+                                  <ul>
+                                    {items.map((check) => (
+                                      <li key={check.id}>{check.title}</li>
+                                    ))}
+                                    {!items.length && (
+                                      <li className="muted">None</li>
+                                    )}
+                                  </ul>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </section>
                       )}
                       <section className="findings panel">
@@ -820,7 +837,7 @@ export default function Home() {
                               onChange={(e) => setOnlyIssues(e.target.checked)}
                             />
                             <SlidersHorizontal size={13} />
-                            Issues only
+                            Needs review
                           </label>
                         </div>
                         <div
@@ -858,7 +875,7 @@ export default function Home() {
                         {checks.length === 0 && (
                           <div className="no-findings">
                             <Check size={20} />
-                            No issues in this category. All checks passed.
+                            No findings match this filter.
                           </div>
                         )}
                         {checks.map((check) => (
@@ -874,12 +891,14 @@ export default function Home() {
                             >
                               <span className="finding-title">
                                 <span
-                                  className={`check-icon ${check.status === "passed" ? "passed" : check.severity}`}
+                                  className={`check-icon ${resultClass(check)}`}
                                 >
                                   {check.status === "passed" ? (
                                     <Check size={12} />
-                                  ) : (
+                                  ) : check.status === "failed" ? (
                                     "!"
+                                  ) : (
+                                    "—"
                                   )}
                                 </span>
                                 <span>
@@ -887,7 +906,11 @@ export default function Home() {
                                   <small>
                                     {check.status === "failed"
                                       ? `${check.severity} severity · Review recommended`
-                                      : "Meets this check’s criteria"}
+                                      : check.status === "inconclusive"
+                                        ? "Incomplete · Manual review needed"
+                                        : check.status === "not_applicable"
+                                          ? "No applicable elements"
+                                          : "Meets this check’s criteria"}
                                   </small>
                                 </span>
                               </span>
@@ -895,11 +918,9 @@ export default function Home() {
                                 {check.category}
                               </span>
                               <span
-                                className={`result-badge ${check.status === "passed" ? "passed" : check.severity}`}
+                                className={`result-badge ${resultClass(check)}`}
                               >
-                                {check.status === "passed"
-                                  ? "PASSED"
-                                  : check.severity.toUpperCase()}
+                                {resultLabel(check)}
                               </span>
                               <ChevronDown
                                 size={14}
@@ -922,6 +943,49 @@ export default function Home() {
                                   </span>
                                   <p>{check.fix}</p>
                                 </div>
+                                {!!check.elements?.length && (
+                                  <div className="affected-elements">
+                                    <span className="eyebrow">
+                                      AFFECTED ELEMENTS ·{" "}
+                                      {check.element_count ??
+                                        check.elements.length}
+                                    </span>
+                                    {check.elements.map((element, index) => (
+                                      <article
+                                        key={`${element.selector}-${index}`}
+                                      >
+                                        <code className="element-selector">
+                                          {element.selector}
+                                        </code>
+                                        <pre>{element.html}</pre>
+                                        <p>{element.fix}</p>
+                                      </article>
+                                    ))}
+                                    {(check.element_count || 0) >
+                                      check.elements.length && (
+                                      <p>
+                                        Showing the first{" "}
+                                        {check.elements.length} elements.
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                                {!!check.links?.length && (
+                                  <div className="affected-elements">
+                                    <span className="eyebrow">
+                                      LINK RESULTS
+                                    </span>
+                                    {check.links.map((link) => (
+                                      <p key={link.url}>
+                                        <code>{link.url}</code> —{" "}
+                                        {link.outcome || "broken"}
+                                        {link.status
+                                          ? ` (HTTP ${link.status})`
+                                          : ""}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -967,7 +1031,7 @@ export default function Home() {
                         })}
                       </div>
                       <div className="empty-bottom">
-                        <span>13 DETERMINISTIC CHECKS</span>
+                        <span>STATIC + RENDERED CHECKS</span>
                         <span>ONE PAGE. THREE PERSPECTIVES.</span>
                       </div>
                     </div>

@@ -1,136 +1,80 @@
 import asyncio
-import ipaddress
-import socket
 import re
 import time
 from urllib.parse import urljoin, urlsplit
 
 import aiohttp
-from aiohttp.abc import AbstractResolver
 from bs4 import BeautifulSoup
+from network import ScanError, PublicResolver, public_ip, validate_url
 
 MAX_BYTES = 2 * 1024 * 1024
 MAX_LINKS = 20
 
 
-class ScanError(ValueError):
-    pass
-
-
-def public_ip(value):
-    address = ipaddress.ip_address(value.split("%")[0])
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-        address = address.ipv4_mapped
-    return address.is_global and not address.is_multicast
-
-
-def validate_url(value):
-    value = value.strip()
-    if (
-        not value
-        or len(value) > 2048
-        or any(ord(c) < 33 for c in value)
-        or "\\" in value
-    ):
-        raise ScanError("Enter a valid public website URL.")
-    if "://" not in value:
-        value = "https://" + value
-    try:
-        parsed = urlsplit(value)
-        port = parsed.port
-        host = parsed.hostname
-    except ValueError:
-        raise ScanError("Enter a valid public website URL.")
-    if (
-        parsed.scheme not in ("http", "https")
-        or not host
-        or parsed.username is not None
-        or parsed.password is not None
-    ):
-        raise ScanError("Use an HTTP or HTTPS URL without embedded credentials.")
-    if port not in (None, 80, 443):
-        raise ScanError("Only standard website ports 80 and 443 are supported.")
-    host = host.lower().rstrip(".")
-    if (
-        host == "localhost"
-        or host.endswith((".localhost", ".local", ".internal"))
-        or "%" in host
-    ):
-        raise ScanError("Private and local network addresses cannot be scanned.")
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        address = None
-    if address is not None and not public_ip(str(address)):
-        raise ScanError("Private and local network addresses cannot be scanned.")
-    return parsed._replace(fragment="").geturl()
-
-
-class PublicResolver(AbstractResolver):
-    async def resolve(self, host, port=0, family=socket.AF_INET):
-        entries = await asyncio.get_running_loop().getaddrinfo(
-            host, port, type=socket.SOCK_STREAM, family=family
-        )
-        if not entries or any(not public_ip(item[4][0]) for item in entries):
-            raise ScanError(
-                "This hostname resolves to a private or restricted network address."
-            )
-        return [
-            {
-                "hostname": host,
-                "host": item[4][0],
-                "port": port,
-                "family": item[0],
-                "proto": item[2],
-                "flags": socket.AI_NUMERICHOST,
-            }
-            for item in entries
-        ]
-
-    async def close(self):
-        pass
+def extract_link_targets(html, base_url):
+    soup = BeautifulSoup(html, "html.parser")
+    page = validate_url(base_url)
+    links = []
+    seen = {page}
+    skipped = 0
+    base = soup.find("base", href=True)
+    if base:
+        try:
+            base_url = validate_url(urljoin(base_url, base["href"]))
+        except (ValueError, TypeError, UnicodeError):
+            pass
+    for anchor in soup.find_all("a", href=True):
+        try:
+            absolute = urljoin(base_url, anchor["href"].strip())
+            if urlsplit(absolute).scheme not in ("http", "https"):
+                continue
+            absolute = validate_url(absolute)
+        except (ValueError, TypeError, UnicodeError):
+            skipped += 1
+            continue
+        if absolute not in seen:
+            seen.add(absolute)
+            links.append(absolute)
+    return links, skipped
 
 
 def extract_links(html, base_url):
-    soup = BeautifulSoup(html, "html.parser")
-    page = urlsplit(base_url)._replace(fragment="").geturl()
-    links = []
-    for anchor in soup.find_all("a", href=True):
-        absolute = urljoin(base_url, anchor["href"].strip())
-        if urlsplit(absolute).scheme not in ("http", "https"):
-            continue
-        try:
-            absolute = validate_url(absolute)
-        except ScanError:
-            continue
-        if absolute != page and absolute not in links:
-            links.append(absolute)
-    return links
+    return extract_link_targets(html, base_url)[0]
 
 
 async def check_link(client, url):
     try:
         for _ in range(4):
+            url = validate_url(url)
             async with client.get(url, allow_redirects=False) as response:
                 status = response.status
                 location = response.headers.get("Location")
-            if status in (301, 302, 303, 307, 308) and location:
+            if status in (301, 302, 303, 307, 308):
+                if not location:
+                    return None
                 url = validate_url(urljoin(url, location))
                 continue
+            if status in (401, 403, 408, 429):
+                return None
             return status
         return None
-    except (ScanError, aiohttp.ClientSSLError):
-        return None
-    except aiohttp.ClientConnectorError:
-        return 0
-    except (aiohttp.ClientError, OSError, ValueError, TimeoutError):
+    except (ScanError, aiohttp.ClientError, OSError, ValueError, TimeoutError):
         return None
 
 
-async def check_links(links, budget=8):
-    links = links[:MAX_LINKS]
-    if not links:
-        return {"found": 0, "checked": 0, "broken": [], "unverified": 0}
+async def check_links(links, budget=8, skipped=0):
+    found = len(links)
+    selected = links[:MAX_LINKS]
+    summary = {
+        "found": found,
+        "checked": 0,
+        "broken": [],
+        "unverified": 0,
+        "skipped": skipped + max(0, found - MAX_LINKS),
+        "details": [],
+    }
+    if not selected:
+        return summary
     connector = aiohttp.TCPConnector(
         resolver=PublicResolver(), use_dns_cache=False, limit=8, limit_per_host=4
     )
@@ -139,26 +83,57 @@ async def check_links(links, budget=8):
         timeout=aiohttp.ClientTimeout(total=6),
         cookie_jar=aiohttp.DummyCookieJar(),
         trust_env=False,
-        headers={"User-Agent": "SiteScan/0.1 (link check)"},
+        headers={"User-Agent": "SiteScan/0.2 (link check)"},
     ) as client:
-        jobs = {asyncio.create_task(check_link(client, link)): link for link in links}
-        done, waiting = await asyncio.wait(jobs, timeout=budget)
-        for job in waiting:
-            job.cancel()
-        await asyncio.gather(*waiting, return_exceptions=True)
-    statuses = {jobs[job]: job.result() for job in done}
-    broken = [
-        {"url": link, "status": statuses[link]}
-        for link in links
-        if statuses.get(link) is not None
-        and (statuses[link] in (0, 404, 410) or statuses[link] >= 500)
-    ]
-    return {
-        "found": len(links),
-        "checked": sum(status is not None for status in statuses.values()),
-        "broken": broken,
-        "unverified": len(links) - sum(s is not None for s in statuses.values()),
-    }
+        jobs = {
+            asyncio.create_task(check_link(client, link)): link for link in selected
+        }
+        try:
+            done, waiting = await asyncio.wait(jobs, timeout=budget)
+            statuses = {
+                jobs[job]: None if job.cancelled() or job.exception() else job.result()
+                for job in done
+            }
+        finally:
+            for job in jobs:
+                if not job.done():
+                    job.cancel()
+            await asyncio.gather(*jobs, return_exceptions=True)
+    for link in selected:
+        status = statuses.get(link)
+        broken = status is not None and (status in (404, 410) or status >= 500)
+        state = "inconclusive" if status is None else "broken" if broken else "verified"
+        summary["details"].append({"url": link, "status": status, "outcome": state})
+        if status is None:
+            summary["unverified"] += 1
+        else:
+            summary["checked"] += 1
+        if broken:
+            summary["broken"].append({"url": link, "status": status})
+    return summary
+
+
+def score_checks(checks):
+    weights = {"high": 3, "medium": 2, "low": 1}
+    scores = {}
+    for category in ("performance", "accessibility", "security"):
+        group = [
+            c
+            for c in checks
+            if c["category"] == category and c["status"] in ("passed", "failed")
+        ]
+        denominator = sum(weights[c["severity"]] for c in group)
+        scores[category] = (
+            round(
+                100
+                * sum(weights[c["severity"]] for c in group if c["status"] == "passed")
+                / denominator
+            )
+            if denominator
+            else None
+        )
+    values = [value for value in scores.values() if value is not None]
+    return scores, round(sum(values) / len(values)) if values else None
 
 
 def analyze(
@@ -274,29 +249,29 @@ def analyze(
     )
     if links is not None:
         broken = links["broken"]
-        listed = ", ".join(
-            f'{item["url"][:120]} ({"unreachable" if item["status"] == 0 else "HTTP " + str(item["status"])})'
-            for item in broken[:5]
+        unverified = links["unverified"]
+        skipped = links.get("skipped", 0)
+        link_status = (
+            "failed"
+            if broken
+            else (
+                "inconclusive"
+                if unverified or skipped
+                else "passed" if links["checked"] else "not_applicable"
+            )
         )
-        evidence = (
-            f'{len(broken)} of {links["checked"]} checked links are broken'
-            + (f": {listed}" if listed else "")
-            + (f" and {len(broken) - 5} more" if len(broken) > 5 else "")
-            + "."
-        )
-        if links["unverified"]:
-            evidence += f' {links["unverified"]} links could not be verified in time and were not counted.'
-        if not links["found"]:
-            evidence = "No HTTP or HTTPS links were found on this page."
+        evidence = f'{len(broken)} broken, {links["checked"]} verified responses, {unverified} inconclusive, {skipped} skipped; {links["found"]} eligible unique links discovered.'
         add(
             "broken-links",
             "performance",
             "Broken links",
-            not broken,
+            False,
             "medium",
-            evidence
-            + f" Up to {MAX_LINKS} unique links are checked; 404, 410, 5xx, and unreachable hosts count as broken.",
-            "Update or remove links that point to missing pages, failing servers, or domains that no longer resolve.",
+            evidence,
+            "Fix links returning 404, 410, or server errors. Retry inconclusive links; access restrictions, timeouts, and connection failures do not prove a link is broken.",
+        )
+        checks[-1].update(
+            status=link_status, links=links.get("details", broken), coverage=links
         )
     images = soup.find_all("img")
     missing_alt = [img for img in images if not img.has_attr("alt")]
@@ -364,15 +339,7 @@ def analyze(
         f"{len(unlabeled)} of {len(inputs)} supported form controls lack a detectable label. Static HTML only.",
         "Associate a visible label with each control using matching for/id attributes, or provide an accessible name with aria-label or aria-labelledby.",
     )
-    weights = {"high": 3, "medium": 2, "low": 1}
-    scores = {}
-    for category in ("performance", "accessibility", "security"):
-        group = [check for check in checks if check["category"] == category]
-        scores[category] = round(
-            100
-            * sum(weights[c["severity"]] for c in group if c["status"] == "passed")
-            / sum(weights[c["severity"]] for c in group)
-        )
+    scores, score = score_checks(checks)
     return {
         "final_url": final_url,
         "http_status": status,
@@ -381,7 +348,9 @@ def analyze(
         "redirects": redirects,
         "title": title[:250],
         "scores": scores,
-        "score": round(sum(scores.values()) / len(scores)),
+        "score": score,
+        "scanner_version": "2.0",
+        "scoring_version": "2.0",
         "checks": checks,
     }
 
@@ -452,11 +421,10 @@ async def scan_page(url):
                         )
                         break
                 else:
-                    raise ScanError(
-                        "The website exceeded the limit of five redirects."
-                    )
-            links = await check_links(extract_links(page[4], page[1]))
-            return analyze(*page, links=links)
+                    raise ScanError("The website exceeded the limit of five redirects.")
+        targets, skipped = extract_link_targets(page[4], page[1])
+        links = await check_links(targets, skipped=skipped)
+        result = analyze(*page, links=links)
     except ScanError:
         raise
     except (aiohttp.ClientConnectorCertificateError, aiohttp.ClientSSLError):
@@ -469,3 +437,17 @@ async def scan_page(url):
         raise ScanError(
             "The website could not be reached. Check the address and try again."
         )
+
+    from accessibility import audit_page
+
+    rendered = await audit_page(result["final_url"])
+    result["rendered_accessibility"] = {
+        key: value for key, value in rendered.items() if key != "checks"
+    }
+    result["checks"].extend(rendered["checks"])
+    result["scores"], result["score"] = score_checks(result["checks"])
+    result["coverage"] = {
+        state: sum(c["status"] == state for c in result["checks"])
+        for state in ("passed", "failed", "inconclusive", "not_applicable")
+    }
+    return result

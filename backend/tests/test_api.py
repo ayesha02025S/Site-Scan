@@ -39,7 +39,7 @@ def test_submit_save_retrieve_and_restart(client, monkeypatch):
     response = client.post("/scans", json={"url": "example.com"})
     assert response.status_code == 202
     data = response.json()
-    assert data["url"] == "https://example.com"
+    assert data["url"] == "https://example.com/"
     saved = wait_for_scan(client, data["id"])
     assert saved["status"] == "completed"
     assert saved["result"]["score"] == 80
