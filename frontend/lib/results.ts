@@ -13,6 +13,20 @@ export type CheckResult = {
   elements?: { selector: string; html: string; fix: string; impact?: string }[];
   links?: { url: string; status: number | null; outcome?: string }[];
 };
+export type Explanation = {
+  source: "ai" | "rules";
+  model: string | null;
+  note: string | null;
+  summary: string;
+  top_fixes: {
+    check_id: string;
+    title: string;
+    category: Category;
+    severity: CheckResult["severity"];
+    why: string;
+    how: string;
+  }[];
+};
 export type Result = {
   final_url: string;
   http_status: number;
@@ -25,6 +39,7 @@ export type Result = {
   checks: CheckResult[];
   scanner_version?: string;
   scoring_version?: string;
+  explanation?: Explanation;
   rendered_accessibility?: {
     status: string;
     message: string;

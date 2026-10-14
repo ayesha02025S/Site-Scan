@@ -2414,3 +2414,121 @@ footer {
 .affected-elements p {
   white-space: pre-line;
 }
+
+.ai-panel {
+  margin-bottom: 18px;
+}
+.ai-panel .section-heading > svg {
+  color: var(--amber);
+}
+.explain-button {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border: 1px solid #51472c;
+  background: #272319;
+  color: var(--amber);
+  font: 10px var(--mono);
+  cursor: pointer;
+}
+.explain-button:disabled {
+  cursor: progress;
+  opacity: 0.75;
+}
+.ai-intro,
+.ai-summary,
+.ai-note {
+  margin: 0;
+  padding: 0 20px 16px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.ai-intro,
+.ai-note {
+  color: var(--muted);
+}
+.ai-fixes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+.ai-fixes li {
+  display: flex;
+  gap: 14px;
+  padding: 16px 20px;
+  min-width: 0;
+}
+.ai-fixes li + li {
+  border-top: 1px solid var(--border);
+}
+.ai-fixes li > div {
+  min-width: 0;
+}
+.ai-rank {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #51472c;
+  color: var(--amber);
+  font: 10px var(--mono);
+}
+.ai-fix-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.ai-fix-title:hover {
+  color: var(--amber);
+}
+.ai-meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font: 9px var(--mono);
+  text-transform: uppercase;
+}
+.ai-fixes p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #b4bcc2;
+  overflow-wrap: anywhere;
+}
+.ai-how strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.ai-disclaimer {
+  display: block;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font: 9px var(--mono);
+  line-height: 1.6;
+}
+@media (max-width: 560px) {
+  .ai-panel .section-heading {
+    flex-wrap: wrap;
+  }
+  .ai-intro,
+  .ai-summary,
+  .ai-note,
+  .ai-fixes li,
+  .ai-disclaimer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}
