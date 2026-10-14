@@ -22,12 +22,14 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   X,
   Zap,
 } from "lucide-react";
 
 import {
   type Category,
+  type Explanation,
   type Scan,
   compareResults,
   previousScan,
@@ -68,8 +70,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(API + path, {
-      ...options,
       signal: AbortSignal.timeout(10000),
+      ...options,
     });
   } catch {
     throw new Error(
@@ -106,6 +108,11 @@ export default function Home() {
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [explanations, setExplanations] = useState<
+    Record<string, Explanation>
+  >({});
+  const [explaining, setExplaining] = useState<string | null>(null);
+  const [explainError, setExplainError] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const revision = useRef(0);
   const refreshing = useRef(false);
@@ -114,6 +121,9 @@ export default function Home() {
   const pending = scan?.status === "queued" || scan?.status === "running";
   const issues =
     result?.checks.filter((check) => check.status === "failed") || [];
+  const explanation = scan
+    ? result?.explanation || explanations[scan.id]
+    : undefined;
   const previous = scan && result ? previousScan(scans, scan) : undefined;
   const comparison =
     result && previous?.result ? compareResults(result, previous.result) : null;
@@ -187,12 +197,42 @@ export default function Home() {
     }
   }
 
+  async function explain(scanId: string) {
+    setExplaining(scanId);
+    setExplainError("");
+    try {
+      const data = await request<Explanation>(`/scans/${scanId}/explain`, {
+        method: "POST",
+        signal: AbortSignal.timeout(45000),
+      });
+      setExplanations((current) => ({ ...current, [scanId]: data }));
+    } catch (err) {
+      setExplainError(
+        err instanceof Error ? err.message : "The explanation failed.",
+      );
+    } finally {
+      setExplaining(null);
+    }
+  }
+
+  function openFinding(id: string) {
+    setFilter("all");
+    setOnlyIssues(false);
+    setExpanded(id);
+    requestAnimationFrame(() =>
+      document
+        .getElementById(`finding-${id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+    );
+  }
+
   function selectScan(item: Scan) {
     setSelected(item.id);
     setView("overview");
     setFilter("all");
     setExpanded(null);
     setOnlyIssues(false);
+    setExplainError("");
   }
   function newScan() {
     setView("overview");
@@ -823,6 +863,90 @@ export default function Home() {
                           )}
                         </section>
                       )}
+                      {issues.length > 0 && (
+                        <section
+                          className="ai-panel panel"
+                          aria-label="Explanation and top fixes"
+                          aria-busy={explaining === scan.id}
+                        >
+                          <div className="section-heading">
+                            <Sparkles size={15} />
+                            <h2>What to fix first</h2>
+                            {explanation && (
+                              <span className="tag">
+                                {explanation.source === "ai"
+                                  ? "AI EXPLANATION"
+                                  : "RANKED BY SEVERITY"}
+                              </span>
+                            )}
+                            {!explanation && (
+                              <button
+                                className="explain-button"
+                                onClick={() => explain(scan.id)}
+                                disabled={explaining === scan.id}
+                              >
+                                {explaining === scan.id ? (
+                                  <LoaderCircle size={13} className="spin" />
+                                ) : (
+                                  <Sparkles size={13} />
+                                )}
+                                {explaining === scan.id
+                                  ? "Explaining…"
+                                  : "Explain with AI"}
+                              </button>
+                            )}
+                          </div>
+                          {!explanation && (
+                            <p className="ai-intro">
+                              {explainError ||
+                                `Get a plain-language summary of the ${issues.length} failed check${issues.length === 1 ? "" : "s"} and the three fixes that matter most.`}
+                            </p>
+                          )}
+                          {explanation && (
+                            <>
+                              <p className="ai-summary">
+                                {explanation.summary}
+                              </p>
+                              {explanation.note && (
+                                <p className="ai-note">{explanation.note}</p>
+                              )}
+                              <ol className="ai-fixes">
+                                {explanation.top_fixes.map((fix, index) => (
+                                  <li key={fix.check_id}>
+                                    <span className="ai-rank">
+                                      {index + 1}
+                                    </span>
+                                    <div>
+                                      <button
+                                        className="ai-fix-title"
+                                        onClick={() => openFinding(fix.check_id)}
+                                      >
+                                        {fix.title}
+                                        <ArrowUpRight size={12} />
+                                      </button>
+                                      <span className="ai-meta">
+                                        {fix.category} · {fix.severity}{" "}
+                                        severity
+                                      </span>
+                                      <p>{fix.why}</p>
+                                      <p className="ai-how">
+                                        <strong>How to fix:</strong> {fix.how}
+                                      </p>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ol>
+                              {explanation.source === "ai" && (
+                                <small className="ai-disclaimer">
+                                  Written by {explanation.model} from this
+                                  scan&apos;s failed checks. Scores and
+                                  detections are not changed by AI.
+                                </small>
+                              )}
+                            </>
+                          )}
+                        </section>
+                      )}
                       <section className="findings panel">
                         <div className="section-heading">
                           <span className="section-number">01</span>
@@ -879,7 +1003,11 @@ export default function Home() {
                           </div>
                         )}
                         {checks.map((check) => (
-                          <div className="finding" key={check.id}>
+                          <div
+                            className="finding"
+                            key={check.id}
+                            id={`finding-${check.id}`}
+                          >
                             <button
                               className="finding-row"
                               aria-expanded={expanded === check.id}

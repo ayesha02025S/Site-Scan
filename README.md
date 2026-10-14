@@ -67,7 +67,8 @@ The backend loads `.env` from the repository root. Existing shell variables take
 | `DATABASE_URL` | Defaults to SQLite; relative SQLite paths are resolved inside `backend/`. |
 | `FRONTEND_ORIGIN` | Frontend origin allowed by API CORS; defaults to `http://localhost:3000`. |
 | `NEXT_PUBLIC_API_BASE_URL` | API address for the frontend; defaults to `http://localhost:8000`. |
-| `OPENAI_API_KEY` | Reserved for a future milestone. Not used or required by M1. |
+| `GEMINI_API_KEY` | Optional. Enables AI explanations. Create a free key at [Google AI Studio](https://aistudio.google.com/apikey). |
+| `GEMINI_MODEL` | Gemini model for explanations; defaults to `gemini-flash-lite-latest`. |
 
 To use PostgreSQL, create a database and database user, then set `DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/sitescan` in your local `.env`. The backend creates the initial scans table on startup. Schema migrations are not implemented yet. Restart the backend after changing its configuration; restart or rebuild the frontend after changing its public API URL.
 
@@ -92,8 +93,15 @@ These are basic project heuristics, not a Lighthouse score, WCAG certification, 
 | `GET` | `/scans/{id}` | Scan status, results, or failure reason |
 | `GET` | `/scans` | Latest 100 scans, newest first |
 | `GET` | `/scans/{id}/export` | Download a saved scan as JSON |
+| `POST` | `/scans/{id}/explain` | Plain-language summary and top three fixes for a completed scan |
 
 Scans move through `queued`, `running`, and `completed` or `failed`. Each scan is saved in the database. Up to three scans run concurrently, with at most 12 pending tasks in one API process. Tasks run in-process for M1; run one Uvicorn worker. On restart, unfinished scans are marked failed with an explanation. Completed history survives restarts.
+
+## AI explanations
+
+On a completed scan with failed checks, **Explain with AI** sends the failed checks (titles, evidence, suggested fixes, and up to three affected selectors per check) to Gemini. Gemini returns a short summary and picks the three fixes that matter most. The backend discards any fix that does not refer to a check that actually failed, so the AI cannot invent detections or change scores. Successful explanations are saved with the scan so repeat views do not use API quota.
+
+Without `GEMINI_API_KEY`, or if Gemini fails or returns an invalid answer, the panel still shows the top three failed checks ranked by severity and affected-element count, with a note explaining why. Page HTML is never sent to Gemini. The free Gemini tier may use submitted content to improve Google products; scan results describe public pages only.
 
 ## Validation
 

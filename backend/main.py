@@ -10,6 +10,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
 
 from database import Base, Scan, Session, engine, serialize
+from explain import explain_scan
 from scanner import ScanError, scan_page, validate_url
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,25 @@ def get_scan(scan_id: str):
         if scan is None:
             raise HTTPException(404, "Scan not found.")
         return serialize(scan)
+
+
+@app.post("/scans/{scan_id}/explain")
+async def explain(scan_id: str):
+    with Session() as db:
+        scan = db.get(Scan, scan_id)
+        if scan is None:
+            raise HTTPException(404, "Scan not found.")
+        if scan.status != "completed" or not scan.result:
+            raise HTTPException(409, "The scan has not finished yet.")
+        result = scan.result
+    if result.get("explanation"):
+        return result["explanation"]
+    explanation = await explain_scan(result)
+    if explanation["source"] == "ai":
+        with Session.begin() as db:
+            scan = db.get(Scan, scan_id)
+            scan.result = {**scan.result, "explanation": explanation}
+    return explanation
 
 
 @app.get("/scans/{scan_id}/export")
