@@ -412,3 +412,12 @@ def test_access_and_rate_limits_are_inconclusive(status, monkeypatch):
             return await scanner.check_link(client, "https://example.com/")
 
     assert asyncio.run(run()) is None
+
+
+def test_crawl_rejects_external_page_before_request():
+    from scanner import scan_page
+
+    with pytest.raises(ScanError, match="Redirect leaves"):
+        asyncio.run(
+            scan_page("https://other.example/", allowed_origin=("https", "example.com"))
+        )

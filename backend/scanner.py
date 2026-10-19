@@ -355,7 +355,7 @@ def analyze(
     }
 
 
-async def scan_page(url):
+async def scan_page(url, allowed_origin=None):
     url = validate_url(url)
     connector = aiohttp.TCPConnector(
         resolver=PublicResolver(), use_dns_cache=False, limit=4
@@ -368,7 +368,7 @@ async def scan_page(url):
                 cookie_jar=aiohttp.DummyCookieJar(),
                 trust_env=False,
                 headers={
-                    "User-Agent": "SiteScan/0.1 (single-page educational audit)",
+                    "User-Agent": "SiteScan/0.2 (educational website audit)",
                     "Accept": "text/html,application/xhtml+xml",
                 },
             ) as client:
@@ -377,6 +377,12 @@ async def scan_page(url):
                 started = time.monotonic()
                 for redirects in range(6):
                     current = validate_url(current)
+                    if (
+                        allowed_origin
+                        and (urlsplit(current).scheme, urlsplit(current).netloc)
+                        != allowed_origin
+                    ):
+                        raise ScanError("Redirect leaves the scanned website.")
                     secure_chain = secure_chain and urlsplit(current).scheme == "https"
                     async with client.get(current, allow_redirects=False) as response:
                         if response.status in (301, 302, 303, 307, 308):
@@ -444,6 +450,7 @@ async def scan_page(url):
     result["rendered_accessibility"] = {
         key: value for key, value in rendered.items() if key != "checks"
     }
+    result["discovered_links"] = targets
     result["checks"].extend(rendered["checks"])
     result["scores"], result["score"] = score_checks(result["checks"])
     result["coverage"] = {

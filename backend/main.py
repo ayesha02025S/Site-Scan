@@ -11,7 +11,8 @@ from sqlalchemy import select, update
 
 from database import Base, Scan, Session, engine, serialize
 from explain import explain_scan
-from scanner import ScanError, scan_page, validate_url
+from scanner import ScanError, validate_url
+from crawler import scan_website
 
 logger = logging.getLogger(__name__)
 tasks = set()
@@ -64,7 +65,7 @@ async def run_scan(scan_id, url):
             scan = db.get(Scan, scan_id)
             scan.status = "running"
         try:
-            result = await scan_page(url)
+            result = await scan_website(url)
             with Session.begin() as db:
                 scan = db.get(Scan, scan_id)
                 scan.result = result

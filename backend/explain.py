@@ -5,7 +5,9 @@ import os
 import aiohttp
 
 logger = logging.getLogger(__name__)
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+)
 WEIGHTS = {"high": 3, "medium": 2, "low": 1}
 MAX_FINDINGS = 25
 RESPONSE_SCHEMA = {
@@ -73,6 +75,7 @@ def build_prompt(result):
     for check in failed_checks(result)[:MAX_FINDINGS]:
         finding = {
             "check_id": check["id"],
+            "page_url": check.get("page_url"),
             "title": check["title"],
             "category": check["category"],
             "severity": check["severity"],

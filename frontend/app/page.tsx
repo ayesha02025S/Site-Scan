@@ -108,9 +108,9 @@ export default function Home() {
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [explanations, setExplanations] = useState<
-    Record<string, Explanation>
-  >({});
+  const [explanations, setExplanations] = useState<Record<string, Explanation>>(
+    {},
+  );
   const [explaining, setExplaining] = useState<string | null>(null);
   const [explainError, setExplainError] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -449,14 +449,15 @@ export default function Home() {
                 <h2>What a scan measures</h2>
               </div>
               <p>
-                Site Scan fetches one public HTML page and runs 13 static/link
-                and 9 rendered-page checks. It follows up to five redirects,
-                verifies HTTPS certificates, and records the final response. It
-                checks up to 20 links on the page for dead destinations and
-                renders the submitted page in Chromium for axe-core
-                accessibility checks. It does not crawl linked pages. When a URL
-                has been scanned before, the overview compares the result with
-                the previous completed scan.
+                Site Scan crawls up to 10 public pages on the same origin and
+                runs 13 static/link and 9 rendered-page checks. It follows up to
+                five redirects, verifies HTTPS certificates, and records the
+                final response. It checks up to 20 links on the page for dead
+                destinations and renders the submitted page in Chromium for
+                axe-core accessibility checks on each page. A scan has a
+                four-minute total budget. When a URL has been scanned before,
+                the overview compares the result with the previous completed
+                scan.
               </p>
               <div className="method-grid">
                 {categories.map((category) => (
@@ -507,7 +508,7 @@ export default function Home() {
                         <Crosshair size={16} />
                         <h2>Start a site assessment</h2>
                       </div>
-                      <span className="tag">SINGLE-PAGE SCAN</span>
+                      <span className="tag">UP TO 10 PAGES</span>
                     </div>
                     <form onSubmit={submit}>
                       <label htmlFor="target-url" className="sr-only">
@@ -573,7 +574,8 @@ export default function Home() {
                       <div className="eyebrow">ASSESSMENT IN PROGRESS</div>
                       <h2>Acquiring the signal.</h2>
                       <p>
-                        Fetching {hostname(scan.url)} and evaluating the page.
+                        Crawling {hostname(scan.url)} and evaluating up to 10
+                        pages. This can take up to four minutes.
                       </p>
                       <div className="scanning-steps">
                         <span>
@@ -673,7 +675,8 @@ export default function Home() {
                             </div>
                           </div>
                           <div className="card-footer">
-                            SINGLE-PAGE HEALTH INDEX<span>01 / 01</span>
+                            WEBSITE HEALTH INDEX
+                            <span>{result.crawl?.completed || 1} PAGES</span>
                           </div>
                         </article>
                         {categories.map((category) => {
@@ -757,6 +760,42 @@ export default function Home() {
                           Export JSON
                         </a>
                       </div>
+                      {result.crawl && (
+                        <section className="audit-summary">
+                          <h3>
+                            Website crawl · {result.crawl.completed} pages
+                            audited
+                          </h3>
+                          <p>
+                            {result.crawl.attempted} / {result.crawl.limit} page
+                            attempts · {result.crawl.status}
+                            {result.crawl.timed_out
+                              ? " · Time limit reached"
+                              : ""}{" "}
+                            · {result.crawl.remaining} discovered pages not
+                            scanned
+                          </p>
+                          <p>
+                            Scores combine evaluated checks across audited
+                            pages. Response metrics above describe the starting
+                            page.
+                          </p>
+                          {result.pages?.map((page) => (
+                            <p key={page.url}>
+                              <a
+                                href={page.final_url || page.url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {page.final_url || page.url}
+                              </a>{" "}
+                              · {page.status}
+                              {page.score != null ? ` · ${page.score}/100` : ""}
+                              {page.error ? ` · ${page.error}` : ""}
+                            </p>
+                          ))}
+                        </section>
+                      )}
                       {result.rendered_accessibility && (
                         <section
                           className="audit-summary panel"
@@ -913,20 +952,19 @@ export default function Home() {
                               <ol className="ai-fixes">
                                 {explanation.top_fixes.map((fix, index) => (
                                   <li key={fix.check_id}>
-                                    <span className="ai-rank">
-                                      {index + 1}
-                                    </span>
+                                    <span className="ai-rank">{index + 1}</span>
                                     <div>
                                       <button
                                         className="ai-fix-title"
-                                        onClick={() => openFinding(fix.check_id)}
+                                        onClick={() =>
+                                          openFinding(fix.check_id)
+                                        }
                                       >
                                         {fix.title}
                                         <ArrowUpRight size={12} />
                                       </button>
                                       <span className="ai-meta">
-                                        {fix.category} · {fix.severity}{" "}
-                                        severity
+                                        {fix.category} · {fix.severity} severity
                                       </span>
                                       <p>{fix.why}</p>
                                       <p className="ai-how">
@@ -1031,6 +1069,9 @@ export default function Home() {
                                 </span>
                                 <span>
                                   {check.title}
+                                  {check.page_url && (
+                                    <small>{check.page_url}</small>
+                                  )}
                                   <small>
                                     {check.status === "failed"
                                       ? `${check.severity} severity · Review recommended`
@@ -1160,7 +1201,7 @@ export default function Home() {
                       </div>
                       <div className="empty-bottom">
                         <span>STATIC + RENDERED CHECKS</span>
-                        <span>ONE PAGE. THREE PERSPECTIVES.</span>
+                        <span>ONE WEBSITE. THREE PERSPECTIVES.</span>
                       </div>
                     </div>
                   )}

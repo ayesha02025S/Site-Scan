@@ -2,7 +2,7 @@
 
 CS 4094
 
-M1: A user enters a URL, Site Scan checks that single page, saves the results, and displays them.
+M1: A user enters a URL, Site Scan crawls up to 10 pages on the same origin, saves the results, and displays them.
 
 Site Scan is a full-stack website auditing application with a minimal dark interface. Site Scan includes 13 static/link checks plus 9 rendered accessibility rules using Playwright Chromium and axe-core, persistent scan history, comparison with the previous scan of the same URL, category scores, expandable findings, and JSON report export.
 
@@ -125,7 +125,7 @@ If your Mac reports `EMFILE` watcher errors, start the frontend with `WATCHPACK_
 
 ## M1 boundaries
 
-The scanner fetches one page, follows at most five redirects, accepts HTTP/HTTPS on ports 80 and 443, and limits decoded HTML to 2 MB. Page fetching has a 25-second deadline, link checks an 8-second budget, and the browser phase a separate 35-second deadline. Static/link results remain available if the browser fails.
+The scanner crawls up to 10 page attempts using breadth-first discovery of HTML links on the starting page’s final origin (scheme and host). Fragments and duplicate URLs are deduplicated; query strings and trailing slashes remain distinct. Child-page redirects outside that origin are rejected. Failed child pages are recorded without discarding successful results. A four-minute total budget bounds the scan. Scores combine evaluated checks from completed pages; failed pages are reported separately. Findings identify their source page, and exports include page summaries. JavaScript-only navigation is not discovered. The scanner follows at most five redirects, accepts HTTP/HTTPS on ports 80 and 443, and limits decoded HTML to 2 MB. Page fetching has a 25-second deadline, link checks an 8-second budget, and the browser phase a separate 35-second deadline. Static/link results remain available if the browser fails.
 
 Browser HTTP requests are intercepted and fetched through the same public-only DNS resolver, pinning validated addresses to the connection. Every redirect is validated. Browser traffic that bypasses interception is sent to a local deny proxy; WebSockets and service workers are blocked. Resource requests are limited to GET, 80 requests, 3 MB per resource, and 15 MB total. No user cookies or credentials are forwarded; TLS checks remain enabled. Fetched page scripts execute in an isolated, sandboxed Chromium instance that is closed after each audit. Embedded frames and interaction-dependent states are outside this audit's coverage. Use container-level egress restrictions and resource limits before production deployment.
 

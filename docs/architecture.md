@@ -37,3 +37,7 @@ A pinned axe-core package installed with `npm ci` in `backend/` supplies nine se
 ## Comparable reports
 
 Reports carry scanner and scoring versions. Uncertain checks are excluded from scores. The frontend compares matching normalized URLs from the latest 100 saved scans, suppresses comparisons across rule versions, and suppresses score deltas when the evaluated check sets differ. A rule must transition from passed to failed to count as newly introduced, or failed to passed to count as resolved.
+
+## Multi-page scanning
+
+The API runs a breadth-first crawler with up to 10 page attempts and a 240-second total budget. The initial final URL determines the allowed origin. Child redirects are checked before fetching, URLs are normalized and deduplicated, and failed child pages remain visible in the saved report. Each completed page runs the existing static, link, and rendered accessibility checks. Page-qualified check IDs keep comparisons and AI recommendations tied to the correct page. Overall scores combine evaluated check weights across completed pages; failed pages do not contribute passing credit. Version 3 reports are not compared against single-page reports.

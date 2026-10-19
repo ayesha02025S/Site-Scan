@@ -2532,3 +2532,8 @@ footer {
     padding-right: 12px;
   }
 }
+
+.audit-summary a,
+.finding-title small {
+  overflow-wrap: anywhere;
+}

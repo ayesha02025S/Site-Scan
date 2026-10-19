@@ -35,7 +35,7 @@ def test_submit_save_retrieve_and_restart(client, monkeypatch):
     async def fake_scan(url):
         return {"score": 80, "checks": []}
 
-    monkeypatch.setattr(main, "scan_page", fake_scan)
+    monkeypatch.setattr(main, "scan_website", fake_scan)
     response = client.post("/scans", json={"url": "example.com"})
     assert response.status_code == 202
     data = response.json()
@@ -52,7 +52,7 @@ def test_failed_scan_is_saved(client, monkeypatch):
     async def fake_scan(url):
         raise ScanError("The website took too long to respond.")
 
-    monkeypatch.setattr(main, "scan_page", fake_scan)
+    monkeypatch.setattr(main, "scan_website", fake_scan)
     data = client.post("/scans", json={"url": "https://example.com"}).json()
     result = wait_for_scan(client, data["id"])
     assert result["status"] == "failed"
@@ -83,7 +83,7 @@ def test_report_export_matches_saved_result(client, monkeypatch):
     async def fake_scan(url):
         return {"score": 90, "checks": []}
 
-    monkeypatch.setattr(main, "scan_page", fake_scan)
+    monkeypatch.setattr(main, "scan_website", fake_scan)
     scan = client.post("/scans", json={"url": "https://example.com"}).json()
     saved = wait_for_scan(client, scan["id"])
     exported = client.get("/scans/" + scan["id"] + "/export")
@@ -94,3 +94,34 @@ def test_report_export_matches_saved_result(client, monkeypatch):
         == f'attachment; filename="site-scan-{scan["id"]}.json"'
     )
     assert client.get("/scans/missing/export").status_code == 404
+
+
+def test_multi_page_report_is_saved_and_exported(client, monkeypatch):
+    import crawler
+
+    async def fake_page(url, allowed_origin=None):
+        return {
+            "final_url": url,
+            "title": "Fixture",
+            "http_status": 200,
+            "scores": {"accessibility": 100},
+            "score": 100,
+            "checks": [
+                {
+                    "id": "title",
+                    "category": "accessibility",
+                    "severity": "low",
+                    "status": "passed",
+                }
+            ],
+            "discovered_links": ["https://example.com/about"],
+            "rendered_accessibility": {"status": "completed"},
+        }
+
+    monkeypatch.setattr(crawler, "scan_page", fake_page)
+    created = client.post("/scans", json={"url": "https://example.com/"}).json()
+    saved = wait_for_scan(client, created["id"])
+    assert saved["result"]["crawl"]["completed"] == 2
+    assert len(saved["result"]["checks"]) == 2
+    exported = client.get(f'/scans/{created["id"]}/export').json()
+    assert exported["result"]["pages"] == saved["result"]["pages"]

@@ -1,6 +1,7 @@
 export type Category = "performance" | "accessibility" | "security";
 export type CheckResult = {
   id: string;
+  page_url?: string;
   category: Category;
   title: string;
   status: "passed" | "failed" | "inconclusive" | "not_applicable";
@@ -28,6 +29,22 @@ export type Explanation = {
   }[];
 };
 export type Result = {
+  pages?: {
+    url: string;
+    final_url?: string;
+    status: string;
+    title?: string;
+    score?: number;
+    error?: string;
+  }[];
+  crawl?: {
+    limit: number;
+    completed: number;
+    attempted: number;
+    remaining: number;
+    timed_out: boolean;
+    status: string;
+  };
   final_url: string;
   http_status: number;
   response_ms: number;
