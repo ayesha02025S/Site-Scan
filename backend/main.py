@@ -16,7 +16,7 @@ from crawler import scan_website
 
 logger = logging.getLogger(__name__)
 tasks = set()
-slots = asyncio.Semaphore(3)
+slots = asyncio.Semaphore(max(1, min(3, int(os.getenv("MAX_CONCURRENT_SCANS", "3")))))
 
 
 @asynccontextmanager

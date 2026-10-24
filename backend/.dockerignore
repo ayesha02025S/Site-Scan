@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!requirements.lock.txt
+!package.json
+!package-lock.json
+!*.py
