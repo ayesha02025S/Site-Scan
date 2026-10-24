@@ -2,9 +2,11 @@
 
 CS 4094
 
-M1: A user enters a URL, Site Scan crawls up to 10 pages on the same origin, saves the results, and displays them.
+A user enters a URL, Site Scan crawls up to 10 pages on the same origin, saves the results, and displays them.
 
 Site Scan is a full-stack website auditing application with a minimal dark interface. Site Scan includes 13 static/link checks plus 9 rendered accessibility rules using Playwright Chromium and axe-core, persistent scan history, comparison with the previous scan of the same URL, category scores, expandable findings, and JSON report export.
+
+Deployed Site Scan: https://site-scan-liard.vercel.app/
 
 ## Stack
 
