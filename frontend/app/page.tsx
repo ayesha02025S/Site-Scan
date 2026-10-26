@@ -449,7 +449,7 @@ export default function Home() {
                 <h2>What a scan measures</h2>
               </div>
               <p>
-                Site Scan crawls up to 10 public pages on the same origin and
+                Site Scan crawls up to 20 public pages on the same origin and
                 runs 13 static/link and 9 rendered-page checks. It follows up to
                 five redirects, verifies HTTPS certificates, and records the
                 final response. It checks up to 20 links on the page for dead
@@ -508,7 +508,7 @@ export default function Home() {
                         <Crosshair size={16} />
                         <h2>Start a site assessment</h2>
                       </div>
-                      <span className="tag">UP TO 10 PAGES</span>
+                      <span className="tag">UP TO 20 PAGES</span>
                     </div>
                     <form onSubmit={submit}>
                       <label htmlFor="target-url" className="sr-only">
@@ -574,7 +574,7 @@ export default function Home() {
                       <div className="eyebrow">ASSESSMENT IN PROGRESS</div>
                       <h2>Acquiring the signal.</h2>
                       <p>
-                        Crawling {hostname(scan.url)} and evaluating up to 10
+                        Crawling {hostname(scan.url)} and evaluating up to 20
                         pages. This can take up to four minutes.
                       </p>
                       <div className="scanning-steps">

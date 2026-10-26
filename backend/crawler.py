@@ -4,7 +4,7 @@ from urllib.parse import urlsplit
 
 from scanner import ScanError, scan_page, score_checks, validate_url
 
-MAX_PAGES = 10
+MAX_PAGES = 20
 CRAWL_SECONDS = 240
 
 

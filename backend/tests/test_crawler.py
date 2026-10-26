@@ -39,9 +39,13 @@ def test_limit_dedup_scope_and_page_ids(monkeypatch):
 
     monkeypatch.setattr(crawler, "scan_page", scan)
     result = asyncio.run(crawler.scan_website("https://example.com/"))
-    assert len(calls) == len(set(calls)) == 10
+    assert len(calls) == len(set(calls)) == 20
     assert all(url.startswith("https://example.com/") for url in calls)
-    assert len({c["id"] for c in result["checks"]}) == 10
+    assert len({c["id"] for c in result["checks"]}) == 20
+    assert result["crawl"]["limit"] == 20
+    assert result["crawl"]["attempted"] == 20
+    assert result["crawl"]["remaining"] == 1
+    assert "https://example.com/19" not in calls
     assert result["crawl"]["status"] == "partial"
     assert all(c["page_url"] for c in result["checks"])
 
