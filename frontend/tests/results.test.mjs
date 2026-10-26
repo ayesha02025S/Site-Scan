@@ -93,3 +93,35 @@ test("unknown check statuses are clearly labeled", () => {
   assert.equal(resultLabel(check("a", "inconclusive")), "REVIEW");
   assert.equal(resultLabel(check("a", "not_applicable")), "N/A");
 });
+
+test("trends group normalized starting URLs, exclude unfinished scans, and sort chronologically", async () => {
+  const { trendScans } = await import("../lib/results.ts");
+  const base = {
+    id: "b",
+    url: "https://example.com/",
+    created_at: "2026-10-02",
+    status: "completed",
+    result: result([]),
+  };
+  const scans = [
+    base,
+    {
+      ...base,
+      id: "a",
+      url: "https://EXAMPLE.com:443/#top",
+      created_at: "2026-10-01",
+    },
+    { ...base, id: "other", url: "https://other.com/" },
+    { ...base, id: "path", url: "https://example.com/other" },
+    { ...base, id: "failed", status: "failed" },
+    { ...base, id: "running", status: "running" },
+    { ...base, id: "missing", result: null },
+    { ...base, id: "bad-date", created_at: "invalid" },
+  ];
+  assert.deepEqual(
+    trendScans(scans, base).map((s) => s.id),
+    ["a", "b"],
+  );
+  assert.equal(trendScans([], base).length, 0);
+  assert.equal(scans[0].id, "b");
+});

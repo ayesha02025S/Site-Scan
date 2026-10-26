@@ -37,6 +37,8 @@ import {
   resultLabel,
 } from "../lib/results";
 
+import HealthTrends from "../components/HealthTrends";
+
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const categories: Category[] = ["performance", "accessibility", "security"];
 const categoryIcons = {
@@ -815,6 +817,11 @@ export default function Home() {
                           </small>
                         </section>
                       )}
+                      <HealthTrends
+                        scans={scans}
+                        selected={scan}
+                        onSelect={selectScan}
+                      />
                       {comparison && previous && (
                         <section
                           className="comparison panel"

@@ -2537,3 +2537,94 @@ footer {
 .finding-title small {
   overflow-wrap: anywhere;
 }
+
+.health-trends {
+  margin-top: 20px;
+  overflow: hidden;
+}
+.health-trends .section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.trend-note,
+.trend-empty {
+  margin: 16px 20px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.trend-empty {
+  color: var(--text);
+}
+.trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 20px;
+}
+.trend-legend button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.trend-legend button[aria-pressed="false"] {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.trend-legend span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.trend-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 16px 0;
+}
+.trend-chart text {
+  fill: #aeb6bf;
+  font: 11px var(--mono);
+}
+.trend-details {
+  border-top: 1px solid var(--border);
+  padding: 16px 20px;
+}
+.trend-details summary {
+  cursor: pointer;
+}
+.trend-table-wrap {
+  overflow-x: auto;
+  margin-top: 16px;
+}
+.trend-details table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.trend-details caption {
+  text-align: left;
+  color: var(--muted);
+  padding-bottom: 12px;
+}
+.trend-details th,
+.trend-details td {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 8px;
+  white-space: nowrap;
+  font-weight: 400;
+}
+.trend-details button {
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.trend-details tr[aria-current="true"] {
+  background: #20252b;
+}

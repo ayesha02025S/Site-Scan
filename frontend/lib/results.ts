@@ -148,3 +148,19 @@ export function resultLabel(check: CheckResult) {
         ? "N/A"
         : "PASSED";
 }
+
+export function trendScans(scans: Scan[], selected: Scan) {
+  return scans
+    .filter(
+      (scan) =>
+        scan.status === "completed" &&
+        scan.result &&
+        Number.isFinite(Date.parse(scan.created_at)) &&
+        normalizedUrl(scan.url) === normalizedUrl(selected.url),
+    )
+    .sort(
+      (a, b) =>
+        Date.parse(a.created_at) - Date.parse(b.created_at) ||
+        a.id.localeCompare(b.id),
+    );
+}

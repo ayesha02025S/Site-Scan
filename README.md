@@ -159,3 +159,7 @@ Site-Scan/
 ├── .env.example
 └── README.md
 ```
+
+### Health trends
+
+Open a completed assessment to view **Health over time**. The chart shows overall, performance, accessibility, and security scores across completed scans of the same normalized starting URL, in chronological order. Toggle individual series or expand the score table to open a historical report. One scan shows a baseline; scan the same URL again to build a trend. Trends use the latest 100 saved assessments. Lines break when scanner/scoring versions or evaluated check sets differ, and the table shows crawl coverage so partial scans are distinguishable.
