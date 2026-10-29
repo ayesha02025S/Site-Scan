@@ -17,8 +17,12 @@ def client(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main, "Session", sessionmaker(engine, expire_on_commit=False))
-    with TestClient(main.app) as client:
-        yield client
+    main.app.dependency_overrides[main.require_user] = lambda: "user_test"
+    try:
+        with TestClient(main.app) as client:
+            yield client
+    finally:
+        main.app.dependency_overrides.clear()
     engine.dispose()
 
 
@@ -69,7 +73,7 @@ def test_input_errors_and_missing_scan(client):
 
 def test_restart_marks_interrupted_scan_failed(client):
     with main.Session.begin() as db:
-        scan = Scan(url="https://example.com", status="running")
+        scan = Scan(owner_id="user_test", url="https://example.com", status="running")
         db.add(scan)
         db.flush()
         scan_id = scan.id

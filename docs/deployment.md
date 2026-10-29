@@ -35,7 +35,7 @@ Use `/health` for the health check. Run one worker and one backend replica: jobs
 
 Open the Vercel URL from another device. Submit a scan and confirm that it completes, reports rendered accessibility results, and displays the page summaries. Reopen its history entry and export the report. Restart the backend and confirm completed reports remain available. Test AI explanations separately if a Gemini key is configured.
 
-The current app has shared scan history and no user accounts. Everyone with access to the app can see stored reports.
+Clerk sign-in is required. Set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY in Vercel, and CLERK_ISSUER_URL plus CLERK_AUTHORIZED_PARTIES in Render. Reports are restricted to the verified account. Legacy unowned reports remain stored but are not visible in account histories. See the README account setup instructions.
 
 ## Free hosting
 

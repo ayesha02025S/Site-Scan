@@ -37,6 +37,8 @@ import {
   resultLabel,
 } from "../lib/results";
 
+import { useAuth, UserButton } from "@clerk/nextjs";
+import AccountGate from "../components/AccountGate";
 import HealthTrends from "../components/HealthTrends";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -68,16 +70,22 @@ const dateLabel = (date: string) =>
     minute: "2-digit",
   });
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function authenticatedRequest<T>(
+  token: string,
+  path: string,
+  options?: RequestInit,
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(API + path, {
       signal: AbortSignal.timeout(10000),
       ...options,
+      cache: "no-store",
+      headers: { ...options?.headers, Authorization: `Bearer ${token}` },
     });
   } catch {
     throw new Error(
-      "Cannot reach the scanner. Check that the backend is running on port 8000, then retry.",
+      "Cannot reach the scanner. The service may be waking up. Please try again in a minute.",
     );
   }
   const data = await response.json();
@@ -96,6 +104,35 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export default function Home() {
+  return (
+    <AccountGate>
+      <Dashboard />
+    </AccountGate>
+  );
+}
+
+function Dashboard() {
+  const { getToken } = useAuth();
+  async function request<T>(path: string, options?: RequestInit): Promise<T> {
+    const token = await getToken();
+    if (!token) throw new Error("Your session expired. Please sign in again.");
+    return authenticatedRequest<T>(token, path, options);
+  }
+  async function exportScan(id: string) {
+    try {
+      const data = await request<Scan>(`/scans/${id}/export`);
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `site-scan-${id}.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
   const [scans, setScans] = useState<Scan[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<"overview" | "history" | "methodology">(
@@ -283,6 +320,10 @@ export default function Home() {
             <ArrowUpRight size={13} className="nav-key" />
           </button>
         </nav>
+        <div className="account-menu">
+          <UserButton />
+          <span>Your workspace</span>
+        </div>
         <div className="nav-status">
           <span className={`status-dot ${online ? "connected" : ""}`} />
           {online ? "SYSTEM ONLINE" : loading ? "CONNECTING" : "SYSTEM OFFLINE"}
@@ -494,10 +535,10 @@ export default function Home() {
                 and at each redirect. Page fetching is limited to 25 seconds and
                 2 MB; link checks have an 8-second budget and browser checks
                 have a separate 35-second deadline. Completed and failed scans
-                are saved locally. The history view displays the latest 100
-                scans. Scans interrupted by a server restart are marked failed.
-                This local prototype has no accounts or authentication; deploy
-                only after adding access controls and durable workers.
+                are saved to your account. The history view displays the latest
+                100 scans. Scans interrupted by a server restart are marked
+                failed. Your reports and exports are accessible only through
+                your signed-in account.
               </p>
             </section>
           ) : (
@@ -757,10 +798,13 @@ export default function Home() {
                           <ArrowRight size={13} />
                           REDIRECTS <strong>{result.redirects}</strong>
                         </span>
-                        <a href={`${API}/scans/${scan.id}/export`} download>
+                        <button
+                          className="export-button"
+                          onClick={() => void exportScan(scan.id)}
+                        >
                           <ArrowDownToLine size={13} />
                           Export JSON
-                        </a>
+                        </button>
                       </div>
                       {result.crawl && (
                         <section className="audit-summary">

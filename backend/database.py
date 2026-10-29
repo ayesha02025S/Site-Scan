@@ -4,7 +4,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from sqlalchemy import JSON, DateTime, String, create_engine
+from sqlalchemy import JSON, DateTime, String, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,6 +37,7 @@ class Scan(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid4())
     )
+    owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     url: Mapped[str] = mapped_column(String(2048))
     status: Mapped[str] = mapped_column(String(20), default="queued")
     created_at: Mapped[datetime] = mapped_column(
@@ -58,3 +59,12 @@ def serialize(scan):
         "result": scan.result,
         "error": scan.error,
     }
+
+
+def initialize_database(bind):
+    Base.metadata.create_all(bind)
+    with bind.begin() as connection:
+        columns = {column["name"] for column in inspect(connection).get_columns("scans")}
+        if "owner_id" not in columns:
+            connection.execute(text("ALTER TABLE scans ADD COLUMN owner_id VARCHAR(255)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_scans_owner_id ON scans (owner_id)"))

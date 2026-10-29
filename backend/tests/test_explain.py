@@ -112,14 +112,18 @@ def client(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main, "Session", sessionmaker(engine, expire_on_commit=False))
-    with TestClient(main.app) as client:
-        yield client
+    main.app.dependency_overrides[main.require_user] = lambda: "user_test"
+    try:
+        with TestClient(main.app) as client:
+            yield client
+    finally:
+        main.app.dependency_overrides.clear()
     engine.dispose()
 
 
 def add_scan(status="completed", result=RESULT):
     with main.Session.begin() as db:
-        scan = Scan(url="https://example.com/", status=status, result=result)
+        scan = Scan(owner_id="user_test", url="https://example.com/", status=status, result=result)
         db.add(scan)
         db.flush()
         return scan.id

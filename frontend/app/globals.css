@@ -2628,3 +2628,77 @@ footer {
 .trend-details tr[aria-current="true"] {
   background: #20252b;
 }
+
+.account-page {
+  min-height: 100vh;
+  max-width: 1120px;
+  margin: auto;
+  padding: 64px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 64px;
+}
+.account-intro {
+  max-width: 500px;
+}
+.account-intro h1 {
+  font-size: clamp(36px, 5vw, 64px);
+  line-height: 1.1;
+  letter-spacing: -0.045em;
+  font-weight: 400;
+  margin: 24px 0;
+}
+.account-intro p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.account-detail {
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+  margin-top: 24px;
+}
+.account-form {
+  min-width: 0;
+}
+.account-switch {
+  display: block;
+  margin: 20px auto;
+  padding: 8px;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.account-menu {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  color: var(--muted);
+}
+.export-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  background: transparent;
+  padding: 8px 12px;
+}
+@media (max-width: 760px) {
+  .account-page {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 32px;
+    padding: 40px 20px;
+  }
+  .account-form {
+    align-self: center;
+    max-width: 100%;
+  }
+  .account-menu {
+    padding: 8px;
+  }
+}

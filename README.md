@@ -52,7 +52,7 @@ npm ci
 npm run dev
 ```
 
-Open http://localhost:3000, enter a public URL, and select **Run assessment**. Results appear automatically. Select **Scan history** to reopen a saved assessment. Use the category filters and **Issues only** checkbox to narrow findings, expand a check for evidence and remediation, or select **Export JSON** to download the report.
+Configure Clerk as described below, then open http://localhost:3000, sign in, enter a public URL, and select **Run assessment**. Results appear automatically. Select **Scan history** to reopen a saved assessment. Use the category filters and **Issues only** checkbox to narrow findings, expand a check for evidence and remediation, or select **Export JSON** to download the report.
 
 On subsequent runs, activate the existing Python environment and start both servers. Repeat dependency installation when a lockfile changes.
 
@@ -72,7 +72,7 @@ The backend loads `.env` from the repository root. Existing shell variables take
 | `GEMINI_API_KEY` | Optional. Enables AI explanations. Create a free key at [Google AI Studio](https://aistudio.google.com/apikey). |
 | `GEMINI_MODEL` | Gemini model for explanations; defaults to `gemini-flash-lite-latest`. |
 
-To use PostgreSQL, create a database and database user, then set `DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/sitescan` in your local `.env`. The backend creates the initial scans table on startup. Schema migrations are not implemented yet. Restart the backend after changing its configuration; restart or rebuild the frontend after changing its public API URL.
+To use PostgreSQL, create a database and database user, then set `DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/sitescan` in your local `.env`. The backend creates the initial scans table on startup. Startup also applies the backward-compatible scan owner column migration. Restart the backend after changing its configuration; restart or rebuild the frontend after changing its public API URL.
 
 Local environment files, database files, dependencies, and generated builds are excluded from Git. Keep real credentials out of `.env.example` and never put a secret in a `NEXT_PUBLIC_` variable.
 
@@ -163,3 +163,15 @@ Site-Scan/
 ### Health trends
 
 Open a completed assessment to view **Health over time**. The chart shows overall, performance, accessibility, and security scores across completed scans of the same normalized starting URL, in chronological order. Toggle individual series or expand the score table to open a historical report. One scan shows a baseline; scan the same URL again to build a trend. Trends use the latest 100 saved assessments. Lines break when scanner/scoring versions or evaluated check sets differ, and the table shows crawl coverage so partial scans are distinguishable.
+
+## Accounts and private scan history
+
+Sign in with Clerk to run scans and access your saved reports from another session or device. Scan reports, explanations, exports, comparisons, and trends are limited to the signed-in account. The API verifies Clerk session signatures, expiry, issuer, and authorized frontend origin before using the session's user ID.
+
+For local development, set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in `frontend/.env.local` to your Clerk application's public key. Set `CLERK_ISSUER_URL` in the backend environment to that application's HTTPS Frontend API URL, and set `CLERK_AUTHORIZED_PARTIES` to `http://localhost:3000,http://127.0.0.1:3000`. Use matching Clerk instances in frontend and backend. No Clerk secret key is needed for this integration. Keep database passwords and other secrets out of Git.
+
+For deployment, set the public key in Vercel and the issuer plus `CLERK_AUTHORIZED_PARTIES=https://site-scan-liard.vercel.app` in Render, then deploy both applications. The current Clerk instance is a development instance for capstone testing; use Clerk's production setup before a production launch.
+
+On startup the database adds an indexed, nullable owner ID without deleting existing reports. Older shared reports have no verified owner and are excluded from account histories. Run a new scan after signing in; never assign legacy reports based only on a browser-supplied ID.
+
+Run backend tests with `cd backend && .venv/bin/python -m pytest -q`. Authentication tests cover invalid tokens, expiry, issuer and origin mismatches, account isolation, protected exports and explanations, and legacy migration. Frontend checks are `npm run build`, `npm test`, and `npm run format:check` from `frontend`.
