@@ -48,6 +48,7 @@ class Scan(Base):
         String(36), primary_key=True, default=lambda: str(uuid4())
     )
     owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    monitor_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     url: Mapped[str] = mapped_column(String(2048))
     status: Mapped[str] = mapped_column(String(20), default="queued")
     created_at: Mapped[datetime] = mapped_column(
@@ -108,10 +109,12 @@ def serialize(scan):
     }
 
 
-def serialize_monitor(monitor):
+def serialize_monitor(monitor, active_scan_id=None):
     return {
         "id": monitor.id,
         "url": monitor.url,
+        "active_scan_id": active_scan_id,
+        "email_enabled": bool(monitor.email and os.getenv("RESEND_API_KEY") and os.getenv("NOTIFICATION_FROM_EMAIL")),
         "frequency": monitor.frequency,
         "active": monitor.active,
         "email": monitor.email,
@@ -140,3 +143,6 @@ def initialize_database(bind):
         if "owner_id" not in columns:
             connection.execute(text("ALTER TABLE scans ADD COLUMN owner_id VARCHAR(255)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_scans_owner_id ON scans (owner_id)"))
+        if "monitor_id" not in columns:
+            connection.execute(text("ALTER TABLE scans ADD COLUMN monitor_id VARCHAR(36)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_scans_monitor_id ON scans (monitor_id)"))

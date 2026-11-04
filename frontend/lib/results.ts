@@ -73,6 +73,8 @@ export type Scan = {
 };
 
 export type Monitor = {
+  active_scan_id: string | null;
+  email_enabled: boolean;
   id: string;
   url: string;
   frequency: "daily" | "weekly";

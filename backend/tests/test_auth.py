@@ -44,6 +44,7 @@ def test_authentication_and_isolation(secured, monkeypatch):
         assert client.get(path).status_code == 401
     assert client.post("/scans", json={"url": "https://example.com"}).status_code == 401
     assert client.post("/scans/missing/explain").status_code == 401
+    assert client.post("/monitors/missing/scan").status_code == 401
     created = client.post("/scans", headers=headers(), json={"url": "https://example.com", "owner_id": "user_bob"})
     assert created.status_code == 202
     scan_id = created.json()["id"]
@@ -80,6 +81,6 @@ def test_legacy_migration(tmp_path):
     initialize_database(engine)
     initialize_database(engine)
     with engine.connect() as conn:
-        row = conn.execute(text("SELECT id, owner_id FROM scans")).one()
-        assert row == ("legacy", None)
+        row = conn.execute(text("SELECT id, owner_id, monitor_id FROM scans")).one()
+        assert row == ("legacy", None, None)
     engine.dispose()

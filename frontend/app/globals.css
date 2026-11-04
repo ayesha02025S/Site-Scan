@@ -2780,3 +2780,22 @@ footer {
     display: none;
   }
 }
+
+.monitor-row {
+  flex-wrap: wrap;
+}
+.monitor-row .text-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (max-width: 560px) {
+  .monitor-target {
+    flex-basis: 100%;
+  }
+  .monitoring-section .section-heading {
+    flex-wrap: wrap;
+  }
+  .monitoring-section .section-heading h2 {
+    min-width: 0;
+  }
+}

@@ -116,7 +116,7 @@ class MonitorUpdate(BaseModel):
     active: bool
 
 
-async def run_scan(scan_id, url, monitor_id=None):
+async def run_scan(scan_id, url, monitor_id=None, scheduled=True):
     async with slots:
         with Session.begin() as db:
             scan = db.get(Scan, scan_id)
@@ -140,13 +140,13 @@ async def run_scan(scan_id, url, monitor_id=None):
                 )
     if monitor_id:
         try:
-            await finish_monitor_run(monitor_id, scan_id)
+            await finish_monitor_run(monitor_id, scan_id, scheduled=scheduled)
         except Exception:
             logger.exception("Monitor follow-up failed: %s", monitor_id)
 
 
-def start_scan(scan_id, url, monitor_id=None):
-    task = asyncio.create_task(run_scan(scan_id, url, monitor_id))
+def start_scan(scan_id, url, monitor_id=None, scheduled=True):
+    task = asyncio.create_task(run_scan(scan_id, url, monitor_id, scheduled))
     tasks.add(task)
     task.add_done_callback(tasks.discard)
 
@@ -162,8 +162,10 @@ def run_due_monitors():
             .limit(max(0, MAX_QUEUED_SCANS - len(tasks)))
         )
         for monitor in due:
+            if active_monitor_scan(db, monitor.id):
+                continue
             monitor.next_run_at = now + FREQUENCIES[monitor.frequency]
-            scan = Scan(url=monitor.url, owner_id=monitor.owner_id)
+            scan = Scan(url=monitor.url, owner_id=monitor.owner_id, monitor_id=monitor.id)
             db.add(scan)
             db.flush()
             started.append((scan.id, monitor.url, monitor.id))
@@ -180,7 +182,7 @@ async def scheduler():
         await asyncio.sleep(SCHEDULER_SECONDS)
 
 
-async def finish_monitor_run(monitor_id, scan_id):
+async def finish_monitor_run(monitor_id, scan_id, scheduled=True):
     alerts = []
     with Session.begin() as db:
         monitor = db.get(Monitor, monitor_id)
@@ -190,7 +192,7 @@ async def finish_monitor_run(monitor_id, scan_id):
         email = monitor.email
         if scan.status == "failed":
             monitor.failures += 1
-            if monitor.failures < FAILURES_BEFORE_ALERT:
+            if monitor.failures < FAILURES_BEFORE_ALERT and scheduled:
                 monitor.next_run_at = datetime.now(timezone.utc) + RETRY_AFTER_FAILURE
             elif monitor.failures == FAILURES_BEFORE_ALERT:
                 alerts.append(failure_alert(monitor.url, scan.error))
@@ -202,7 +204,7 @@ async def finish_monitor_run(monitor_id, scan_id):
                 select(Scan)
                 .where(
                     Scan.owner_id == monitor.owner_id,
-                    Scan.url == monitor.url,
+                    Scan.monitor_id == monitor.id,
                     Scan.status == "completed",
                     Scan.id != scan.id,
                     Scan.created_at < scan.created_at,
@@ -297,11 +299,36 @@ def export_scan(scan_id: str, owner_id: str = Depends(require_user)):
         )
 
 
+def active_monitor_scan(db, monitor_id):
+    return db.scalar(select(Scan.id).where(
+        Scan.monitor_id == monitor_id,
+        Scan.status.in_(["queued", "running"]),
+    ).limit(1))
+
+
+@app.post("/monitors/{monitor_id}/scan", status_code=202)
+async def scan_monitor_now(monitor_id: str, owner_id: str = Depends(require_user)):
+    with Session.begin() as db:
+        monitor = db.get(Monitor, monitor_id)
+        if monitor is None or monitor.owner_id != owner_id:
+            raise HTTPException(404, "Monitor not found.")
+        if active_monitor_scan(db, monitor_id):
+            raise HTTPException(409, "A scan is already queued or running for this website.")
+        if len(tasks) >= MAX_QUEUED_SCANS:
+            raise HTTPException(429, "The scan queue is full. Please try again shortly.")
+        scan = Scan(url=monitor.url, owner_id=owner_id, monitor_id=monitor_id)
+        db.add(scan)
+        db.flush()
+        response = serialize(scan)
+    start_scan(scan.id, scan.url, monitor_id, scheduled=False)
+    return response
+
+
 @app.get("/monitors")
 def list_monitors(owner_id: str = Depends(require_user)):
     with Session() as db:
         return [
-            serialize_monitor(monitor)
+            serialize_monitor(monitor, active_monitor_scan(db, monitor.id))
             for monitor in db.scalars(
                 select(Monitor)
                 .where(Monitor.owner_id == owner_id)
@@ -336,7 +363,7 @@ async def create_monitor(
         monitor_id = monitor.id
     run_due_monitors()
     with Session() as db:
-        return serialize_monitor(db.get(Monitor, monitor_id))
+        return serialize_monitor(db.get(Monitor, monitor_id), active_monitor_scan(db, monitor_id))
 
 
 @app.patch("/monitors/{monitor_id}")
@@ -349,7 +376,7 @@ def update_monitor(
             raise HTTPException(404, "Monitor not found.")
         monitor.active = request.active
         db.flush()
-        return serialize_monitor(monitor)
+        return serialize_monitor(monitor, active_monitor_scan(db, monitor.id))
 
 
 @app.delete("/monitors/{monitor_id}")

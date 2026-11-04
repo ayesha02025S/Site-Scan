@@ -75,7 +75,6 @@ async def scan_website(url):
                 timed_out = True
                 break
             continue
-        attempts += 1
         final = validate_url(page["final_url"])
         final_key = crawl_key(final)
         if root is None:
@@ -84,6 +83,7 @@ async def scan_website(url):
         if final_key in completed:
             pages.append({"url": current, "final_url": final, "status": "duplicate"})
             continue
+        attempts += 1
         completed.update((crawl_key(current), final_key))
         seen.add(final_key)
         for target in page.pop("discovered_links", []):
@@ -99,7 +99,7 @@ async def scan_website(url):
             ):
                 seen.add(crawl_key(target))
                 queue.append(target)
-        page_key = hashlib.sha256(final.encode()).hexdigest()[:16]
+        page_key = hashlib.sha256(final_key.encode()).hexdigest()[:16]
         for check in page["checks"]:
             checks.append(
                 {
@@ -133,7 +133,7 @@ async def scan_website(url):
         "checks": checks,
         "scores": scores,
         "score": score,
-        "scanner_version": "3.1",
+        "scanner_version": "3.2",
         "scoring_version": "3.0",
         "pages": pages,
         "crawl": {

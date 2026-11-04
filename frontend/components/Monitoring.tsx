@@ -14,7 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 
-import type { AppNotification, Monitor } from "../lib/results";
+import type { AppNotification, Monitor, Scan } from "../lib/results";
 
 const dateLabel = (date: string) =>
   new Date(date).toLocaleString(undefined, {
@@ -43,6 +43,8 @@ export default function Monitoring({
   const [url, setUrl] = useState("");
   const [frequency, setFrequency] = useState<Monitor["frequency"]>("daily");
   const [loading, setLoading] = useState(true);
+  const [starting, setStarting] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const unread = notifications.some((item) => !item.read);
@@ -57,9 +59,27 @@ export default function Monitoring({
   }
 
   useEffect(() => {
-    void attempt(async () => {
-      setMonitors(await request<Monitor[]>("/monitors"));
-    }).finally(() => setLoading(false));
+    let live = true;
+    let fetching = false;
+    async function load() {
+      if (fetching) return;
+      fetching = true;
+      try {
+        const list = await request<Monitor[]>("/monitors");
+        if (live) setMonitors(list);
+      } catch (exc) {
+        if (live) setError((exc as Error).message);
+      } finally {
+        fetching = false;
+        if (live) setLoading(false);
+      }
+    }
+    void load();
+    const timer = setInterval(() => void load(), 5000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
   }, []);
 
   async function add(event: FormEvent) {
@@ -77,6 +97,27 @@ export default function Monitoring({
       onScanStarted();
     });
     setSaving(false);
+  }
+
+  async function scanNow(monitor: Monitor) {
+    if (starting || monitor.active_scan_id) return;
+    setStarting(monitor.id);
+    setNotice("");
+    await attempt(async () => {
+      const scan = await request<Scan>(`/monitors/${monitor.id}/scan`, {
+        method: "POST",
+      });
+      setMonitors((items) =>
+        items.map((item) =>
+          item.id === monitor.id ? { ...item, active_scan_id: scan.id } : item,
+        ),
+      );
+      setNotice(
+        "Scan queued. Your schedule is unchanged. Results will appear in Scan history.",
+      );
+      onScanStarted();
+    });
+    setStarting(null);
   }
 
   function toggle(monitor: Monitor) {
@@ -105,6 +146,11 @@ export default function Monitoring({
         <div className="error-banner" role="alert">
           <span>{error}</span>
         </div>
+      )}
+      {notice && (
+        <p role="status" className="monitor-note">
+          {notice}
+        </p>
       )}
       <section className="scan-panel panel">
         <div className="scan-panel-top">
@@ -172,11 +218,26 @@ export default function Monitoring({
                   ? `${monitor.frequency} · next scan ${dateLabel(monitor.next_run_at)}`
                   : `${monitor.frequency} · paused`}
                 {" · "}
-                {monitor.email
+                {monitor.email_enabled
                   ? `alerts also emailed to ${monitor.email}`
                   : "in-app alerts only"}
               </small>
             </div>
+            <button
+              className="text-button"
+              disabled={starting !== null || !!monitor.active_scan_id}
+              onClick={() => void scanNow(monitor)}
+              aria-label={`Scan now ${monitor.url}`}
+            >
+              {starting === monitor.id || monitor.active_scan_id ? (
+                <LoaderCircle size={13} className="spin" />
+              ) : (
+                <Radar size={13} />
+              )}
+              {starting === monitor.id || monitor.active_scan_id
+                ? "Scanning…"
+                : "Scan now"}
+            </button>
             <button
               className="text-button"
               onClick={() => toggle(monitor)}

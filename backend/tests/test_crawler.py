@@ -168,3 +168,27 @@ def test_root_page_that_cannot_be_audited_fails_the_scan(monkeypatch):
     monkeypatch.setattr(crawler, "scan_page", scan)
     with pytest.raises(ScanError, match="refused"):
         asyncio.run(crawler.scan_website("https://example.com/"))
+
+
+def test_redirect_duplicates_leave_room_for_unique_pages(monkeypatch):
+    async def scan(url, **kwargs):
+        if url == 'https://example.com/':
+            return report(url, ['https://example.com/a', 'https://example.com/alias', 'https://example.com/b'])
+        if url.endswith('/alias'):
+            return report('https://example.com/a')
+        return report(url)
+    monkeypatch.setattr(crawler, 'scan_page', scan)
+    monkeypatch.setattr(crawler, 'MAX_PAGES', 3)
+    result = asyncio.run(crawler.scan_website('https://example.com/'))
+    assert result['crawl']['completed'] == result['crawl']['attempted'] == 3
+    assert result['crawl']['status'] == 'completed'
+    assert any(page['url'].endswith('/b') for page in result['pages'])
+
+
+def test_tracking_variants_keep_same_finding_identity(monkeypatch):
+    async def scan(url, **kwargs):
+        return report(url)
+    monkeypatch.setattr(crawler, 'scan_page', scan)
+    one = asyncio.run(crawler.scan_website('https://example.com/about/?utm_source=mail'))
+    two = asyncio.run(crawler.scan_website('https://example.com/about'))
+    assert one['checks'][0]['id'] == two['checks'][0]['id']

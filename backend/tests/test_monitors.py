@@ -265,3 +265,58 @@ def test_interrupted_scan_is_rescheduled_without_counting_as_failure(client, ema
         assert db.scalars(select(Notification)).all() == []
     assert due["user_test"] < limit
     assert due["user_paused"] > limit and due["user_other"] > limit
+
+
+def test_scan_now_preserves_schedule_and_manual_scans_cannot_hide_alert(client, monkeypatch, emails):
+    queue_results(monkeypatch, [report(title="passed"), report(title="failed")])
+    monitor = create(client)
+    before = client.get('/monitors').json()[0]['next_run_at']
+    with main.Session.begin() as db:
+        db.add(Scan(owner_id='user_test', url=monitor['url'], status='completed', result=report(title='failed')))
+    response = client.post(f'/monitors/{monitor["id"]}/scan')
+    assert response.status_code == 202
+    settle()
+    assert client.get('/monitors').json()[0]['next_run_at'] == before
+    assert client.get('/notifications').json()[0]['kind'] == 'new_issues'
+    assert len(emails) == 1
+    with main.Session() as db:
+        assert db.get(Scan, response.json()['id']).monitor_id == monitor['id']
+
+
+def test_scan_now_access_busy_queue_and_paused_schedule(client, monkeypatch):
+    queue_results(monkeypatch, [report(a='passed'), ScanError('Down')])
+    monitor = create(client)
+    path = f'/monitors/{monitor["id"]}/scan'
+    main.app.dependency_overrides[main.require_user] = lambda: 'user_other'
+    assert client.post(path).status_code == 404
+    main.app.dependency_overrides[main.require_user] = lambda: 'user_test'
+    assert client.post('/monitors/missing/scan').status_code == 404
+    monkeypatch.setattr(main, 'MAX_QUEUED_SCANS', 0)
+    assert client.post(path).status_code == 429
+    monkeypatch.setattr(main, 'MAX_QUEUED_SCANS', 12)
+    with main.Session.begin() as db:
+        pending = Scan(owner_id='user_test', url=monitor['url'], monitor_id=monitor['id'], status='queued')
+        db.add(pending)
+        db.flush()
+        pending_id = pending.id
+    assert client.post(path).status_code == 409
+    assert client.get('/monitors').json()[0]['active_scan_id'] == pending_id
+    count = len(client.get('/scans').json())
+    run_again(client, monitor['id'])
+    assert len(client.get('/scans').json()) == count
+    with main.Session.begin() as db:
+        db.get(Scan, pending_id).status = 'failed'
+    client.patch(f'/monitors/{monitor["id"]}', json={'active': False})
+    before = client.get('/monitors').json()[0]['next_run_at']
+    assert client.post(path).status_code == 202
+    settle()
+    after = client.get('/monitors').json()[0]
+    assert after['active'] is False and after['next_run_at'] == before
+
+
+def test_first_monitor_run_ignores_preexisting_manual_report(client, monkeypatch, emails):
+    with main.Session.begin() as db:
+        db.add(Scan(owner_id='user_test', url='https://example.com/', status='completed', result=report(a='passed')))
+    queue_results(monkeypatch, [report(a='failed')])
+    create(client)
+    assert client.get('/notifications').json() == []

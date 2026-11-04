@@ -205,3 +205,9 @@ The address is saved when a monitor is created, so it comes from the signed-in a
 The scheduler checks for due scans every minute inside the API process, so it needs the single-worker deployment described in `docs/deployment.md`. Due times are stored in the database: scans missed while the server was stopped or asleep start when it next runs. A scheduled scan interrupted by a restart is marked failed in your history and runs again 15 minutes after startup, without counting toward a failure alert.
 
 Run backend tests with `cd backend && .venv/bin/python -m pytest -q`. Authentication tests cover invalid tokens, expiry, issuer and origin mismatches, account isolation, protected exports and explanations, and legacy migration. Frontend checks are `npm run build`, `npm test`, and `npm run format:check` from `frontend`.
+
+### Run a monitored scan immediately
+
+Select **Scan now** beside a monitored website to queue an assessment immediately, including for paused monitors. This keeps the existing schedule and pause state. Queued and running monitor scans disable the button; the API also rejects duplicate runs and enforces its queue limit. Results appear in Scan history, and monitor runs use the same regression, failure, and recovery alerts as scheduled assessments.
+
+Monitor scans now retain their monitor ID. Comparisons use the previous successful run of that monitor, so ordinary manual assessments cannot suppress alerts. Existing reports remain saved; each existing monitor establishes a fresh baseline with its first run after this update. Scanner version 3.2 also keeps finding IDs stable across tracking parameters and trailing slashes, and redirect aliases no longer consume the page limit.
