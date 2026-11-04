@@ -103,7 +103,7 @@ def test_report_export_matches_saved_result(client, monkeypatch):
 def test_multi_page_report_is_saved_and_exported(client, monkeypatch):
     import crawler
 
-    async def fake_page(url, allowed_origin=None):
+    async def fake_page(url, allowed_origin=None, link_cache=None):
         return {
             "final_url": url,
             "title": "Fixture",

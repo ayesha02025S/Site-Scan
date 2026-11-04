@@ -6,6 +6,7 @@ import {
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
+  Bell,
   Check,
   ChevronDown,
   ChevronRight,
@@ -28,6 +29,7 @@ import {
 } from "lucide-react";
 
 import {
+  type AppNotification,
   type Category,
   type Explanation,
   type Scan,
@@ -40,6 +42,7 @@ import {
 import { useAuth, UserButton } from "@clerk/nextjs";
 import AccountGate from "../components/AccountGate";
 import HealthTrends from "../components/HealthTrends";
+import Monitoring from "../components/Monitoring";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const categories: Category[] = ["performance", "accessibility", "security"];
@@ -135,9 +138,10 @@ function Dashboard() {
   }
   const [scans, setScans] = useState<Scan[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [view, setView] = useState<"overview" | "history" | "methodology">(
-    "overview",
-  );
+  const [view, setView] = useState<
+    "overview" | "history" | "monitoring" | "methodology"
+  >("overview");
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -152,6 +156,7 @@ function Dashboard() {
   );
   const [explaining, setExplaining] = useState<string | null>(null);
   const [explainError, setExplainError] = useState("");
+  const unreadAlerts = notifications.filter((item) => !item.read).length;
   const input = useRef<HTMLInputElement>(null);
   const revision = useRef(0);
   const refreshing = useRef(false);
@@ -182,9 +187,13 @@ function Dashboard() {
     refreshing.current = true;
     const currentRevision = revision.current;
     try {
-      const list = await request<Scan[]>("/scans");
+      const [list, alerts] = await Promise.all([
+        request<Scan[]>("/scans"),
+        request<AppNotification[]>("/notifications"),
+      ]);
       if (currentRevision !== revision.current) return;
       setScans(list);
+      setNotifications(alerts);
       setOnline(true);
       setError("");
       if (initial) setSelected(list[0]?.id || null);
@@ -208,6 +217,10 @@ function Dashboard() {
     const interval = setInterval(() => void refresh(), 1800);
     return () => clearInterval(interval);
   }, [hasPending]);
+  useEffect(() => {
+    const interval = setInterval(() => void refresh(), 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   async function submit(event?: FormEvent, override?: string) {
     event?.preventDefault();
@@ -273,6 +286,21 @@ function Dashboard() {
     setOnlyIssues(false);
     setExplainError("");
   }
+  async function readAllNotifications() {
+    try {
+      await request("/notifications/read", { method: "POST" });
+      setNotifications((items) =>
+        items.map((item) => ({ ...item, read: true })),
+      );
+    } catch (exc) {
+      setError((exc as Error).message);
+    }
+  }
+  function openNotificationScan(scanId: string) {
+    const item = scans.find((candidate) => candidate.id === scanId);
+    if (item) selectScan(item);
+    else setError("That report is no longer in your latest 100 scans.");
+  }
   function newScan() {
     setView("overview");
     requestAnimationFrame(() => {
@@ -312,6 +340,21 @@ function Dashboard() {
             </span>
           </button>
           <button
+            className={view === "monitoring" ? "nav-item active" : "nav-item"}
+            onClick={() => setView("monitoring")}
+          >
+            <Bell size={17} />
+            Monitoring
+            {unreadAlerts > 0 && (
+              <span
+                className="nav-badge"
+                aria-label={`${unreadAlerts} unread alerts`}
+              >
+                {unreadAlerts}
+              </span>
+            )}
+          </button>
+          <button
             className={view === "methodology" ? "nav-item active" : "nav-item"}
             onClick={() => setView("methodology")}
           >
@@ -341,7 +384,9 @@ function Dashboard() {
                   ? "OVERVIEW"
                   : view === "history"
                     ? "ARCHIVE"
-                    : "REFERENCE"}
+                    : view === "monitoring"
+                      ? "MONITORING"
+                      : "REFERENCE"}
               </div>
               <h1>
                 {view === "overview" ? (
@@ -352,6 +397,8 @@ function Dashboard() {
                   </>
                 ) : view === "history" ? (
                   "Your scan archive."
+                ) : view === "monitoring" ? (
+                  "Always watching."
                 ) : (
                   "Behind the assessment."
                 )}
@@ -361,7 +408,9 @@ function Dashboard() {
                   ? "A clear view of your website’s performance, accessibility, and security. One URL. Every signal that matters."
                   : view === "history"
                     ? "Every assessment, preserved. Return to a previous scan to inspect its findings."
-                    : "Transparent checks. Reproducible findings. No black box."}
+                    : view === "monitoring"
+                      ? "Scheduled scans that tell you when something changes, so you do not have to keep checking."
+                      : "Transparent checks. Reproducible findings. No black box."}
               </p>
             </div>
             {view === "overview" && (
@@ -495,12 +544,12 @@ function Dashboard() {
                 Site Scan crawls up to 20 public pages on the same origin and
                 runs 13 static/link and 9 rendered-page checks. It follows up to
                 five redirects, verifies HTTPS certificates, and records the
-                final response. It checks up to 20 links on the page for dead
-                destinations and renders the submitted page in Chromium for
-                axe-core accessibility checks on each page. A scan has a
-                four-minute total budget. When a URL has been scanned before,
-                the overview compares the result with the previous completed
-                scan.
+                final response. It checks up to 20 new links per page for dead
+                destinations, reusing results for links already checked on other
+                pages, and renders the submitted page in Chromium for axe-core
+                accessibility checks on each page. A scan has a four-minute
+                total budget. When a URL has been scanned before, the overview
+                compares the result with the previous completed scan.
               </p>
               <div className="method-grid">
                 {categories.map((category) => (
@@ -509,10 +558,10 @@ function Dashboard() {
                     <h3>{descriptions[category]}</h3>
                     <p>
                       {category === "performance"
-                        ? "HTTP success, an HTML fetch time of at most 1,500 ms, a decoded HTML size of at most 300 KB, and a bounded link check (404, 410, and 5xx). Unreachable or restricted destinations are inconclusive. Fetch time includes redirects; it is not Core Web Vitals or a browser load time."
+                        ? "HTTP success, an HTML fetch time of at most 1,500 ms, a decoded HTML size of at most 300 KB, and a bounded link check (404, 410, and server errors that persist after one retry). Unreachable, restricted, or temporarily unavailable destinations are inconclusive. Fetch time includes redirects; it is not Core Web Vitals or a browser load time."
                         : category === "accessibility"
                           ? "Static HTML foundations plus axe-core checks on the rendered page: text color contrast, accessible button names, and valid ARIA roles, attributes, and relationships. A 1280 × 900 Chromium snapshot is evaluated; embedded frames and interaction-dependent states need manual review. These checks do not establish WCAG compliance."
-                          : "HTTPS use, Content Security Policy presence, HSTS with positive max-age, X-Content-Type-Options: nosniff, and Referrer-Policy presence. Header presence alone does not establish secure configuration."}
+                          : "HTTPS use, Content Security Policy presence, HSTS with positive max-age, X-Content-Type-Options: nosniff, and Referrer-Policy presence. CSP and Referrer-Policy may be set by a header or a meta tag. Header presence alone does not establish secure configuration."}
                     </p>
                   </article>
                 ))}
@@ -541,6 +590,14 @@ function Dashboard() {
                 your signed-in account.
               </p>
             </section>
+          ) : view === "monitoring" ? (
+            <Monitoring
+              request={request}
+              notifications={notifications}
+              onReadAll={() => void readAllNotifications()}
+              onOpenScan={openNotificationScan}
+              onScanStarted={() => void refresh()}
+            />
           ) : (
             <>
               {view === "overview" && (

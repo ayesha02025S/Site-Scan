@@ -26,6 +26,8 @@ Configure these runtime variables in the hosting dashboard:
 | `FRONTEND_ORIGIN` | The exact Vercel production origin, such as `https://your-project.vercel.app`, without a trailing slash |
 | `GEMINI_API_KEY` | Optional, backend only |
 | `GEMINI_MODEL` | Optional; see the root environment template |
+| `RESEND_API_KEY` | Optional, backend only; enables alert emails |
+| `NOTIFICATION_FROM_EMAIL` | Sender for alert emails, such as `Site Scan <alerts@your-domain.com>` |
 | `MAX_CONCURRENT_SCANS` | Defaults to 1 in the container to reduce Chromium memory use |
 | `PORT` | Assigned by the host; defaults to 8000 |
 
@@ -40,6 +42,8 @@ Clerk sign-in is required. Set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY in Vercel, and 
 ## Free hosting
 
 Use Vercel Hobby for the frontend, Render Free for the backend, and Neon Free for PostgreSQL. Keep paid upgrades disabled. Render Free sleeps after inactivity and shares monthly free instance hours across the workspace. Its free PostgreSQL service expires after 30 days, so use Neon for this deployment. Chromium must be validated on Render before calling the deployment complete.
+
+Scheduled scans run inside the backend process, so they cannot start while Render Free is asleep. Due times are stored in the database and overdue scans start as soon as the service wakes. To keep them close to schedule, have an external uptime service request `/health` more often than every 15 minutes. That keeps the instance awake and uses free instance hours continuously.
 
 ## Deployment status
 

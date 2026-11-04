@@ -2702,3 +2702,81 @@ footer {
     padding: 8px;
   }
 }
+
+.nav-badge {
+  margin-left: auto;
+  min-width: 17px;
+  padding: 2px 5px;
+  background: var(--amber);
+  color: #0d0f11;
+  font: 700 9px var(--mono);
+  text-align: center;
+}
+.monitor-note {
+  margin: 15px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.frequency-select {
+  min-height: 44px;
+  background: #0d1012;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0 12px;
+  font: 12px var(--sans);
+}
+.monitoring-section {
+  margin-bottom: 30px;
+}
+.monitor-row,
+.alert-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  text-align: left;
+}
+.alert-row {
+  background: none;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.alert-row:hover {
+  background: #171b1e;
+}
+.alert-row.unread {
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+.monitor-target,
+.alert-row > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.monitor-target small,
+.alert-row small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.alert-row .alert-body {
+  white-space: pre-line;
+}
+.alert-row > svg {
+  flex: none;
+  color: var(--muted);
+}
+@media (max-width: 560px) {
+  .account-menu span {
+    display: none;
+  }
+}
