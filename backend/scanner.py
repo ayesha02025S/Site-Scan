@@ -9,6 +9,11 @@ from network import ScanError, PublicResolver, public_ip, validate_url
 
 MAX_BYTES = 2 * 1024 * 1024
 MAX_LINKS = 20
+LINK_RETRY_SECONDS = 0.5
+
+
+class PageSkipped(ScanError):
+    """A discovered URL is not an auditable page; this does not reduce crawl coverage."""
 
 
 def extract_link_targets(html, base_url):
@@ -43,6 +48,14 @@ def extract_links(html, base_url):
 
 
 async def check_link(client, url):
+    status = await link_status(client, url)
+    if status is not None and status >= 500:
+        await asyncio.sleep(LINK_RETRY_SECONDS)
+        status = await link_status(client, url)
+    return status
+
+
+async def link_status(client, url):
     try:
         for _ in range(4):
             url = validate_url(url)
@@ -54,7 +67,7 @@ async def check_link(client, url):
                     return None
                 url = validate_url(urljoin(url, location))
                 continue
-            if status in (401, 403, 408, 429):
+            if status in (401, 403, 408, 429, 503) or not 100 <= status < 600:
                 return None
             return status
         return None
@@ -62,44 +75,46 @@ async def check_link(client, url):
         return None
 
 
-async def check_links(links, budget=8, skipped=0):
+async def check_links(links, budget=8, skipped=0, cache=None):
+    cache = {} if cache is None else cache
     found = len(links)
-    selected = links[:MAX_LINKS]
+    statuses = {link: cache[link] for link in links if link in cache}
+    unknown = [link for link in links if link not in statuses]
+    selected = unknown[:MAX_LINKS]
     summary = {
         "found": found,
         "checked": 0,
         "broken": [],
         "unverified": 0,
-        "skipped": skipped + max(0, found - MAX_LINKS),
+        "skipped": skipped + max(0, len(unknown) - MAX_LINKS),
         "details": [],
     }
-    if not selected:
-        return summary
-    connector = aiohttp.TCPConnector(
-        resolver=PublicResolver(), use_dns_cache=False, limit=8, limit_per_host=4
-    )
-    async with aiohttp.ClientSession(
-        connector=connector,
-        timeout=aiohttp.ClientTimeout(total=6),
-        cookie_jar=aiohttp.DummyCookieJar(),
-        trust_env=False,
-        headers={"User-Agent": "SiteScan/0.2 (link check)"},
-    ) as client:
-        jobs = {
-            asyncio.create_task(check_link(client, link)): link for link in selected
-        }
-        try:
-            done, waiting = await asyncio.wait(jobs, timeout=budget)
-            statuses = {
-                jobs[job]: None if job.cancelled() or job.exception() else job.result()
-                for job in done
+    if selected:
+        connector = aiohttp.TCPConnector(
+            resolver=PublicResolver(), use_dns_cache=False, limit=8, limit_per_host=4
+        )
+        async with aiohttp.ClientSession(
+            connector=connector,
+            timeout=aiohttp.ClientTimeout(total=6),
+            cookie_jar=aiohttp.DummyCookieJar(),
+            trust_env=False,
+            headers={"User-Agent": "SiteScan/0.2 (link check)"},
+        ) as client:
+            jobs = {
+                asyncio.create_task(check_link(client, link)): link for link in selected
             }
-        finally:
-            for job in jobs:
-                if not job.done():
-                    job.cancel()
-            await asyncio.gather(*jobs, return_exceptions=True)
-    for link in selected:
+            try:
+                done, waiting = await asyncio.wait(jobs, timeout=budget)
+                for job in done:
+                    if not job.cancelled() and not job.exception():
+                        statuses[jobs[job]] = job.result()
+            finally:
+                for job in jobs:
+                    if not job.done():
+                        job.cancel()
+                await asyncio.gather(*jobs, return_exceptions=True)
+    cache.update({k: v for k, v in statuses.items() if v is not None})
+    for link in [link for link in links if link in statuses or link in selected]:
         status = statuses.get(link)
         broken = status is not None and (status in (404, 410) or status >= 500)
         state = "inconclusive" if status is None else "broken" if broken else "verified"
@@ -164,6 +179,25 @@ def analyze(
             }
         )
 
+    def named_by_reference(element):
+        references = element.get("aria-labelledby", "").split()
+        return bool(references) and all(
+            soup.find(id=ref) and soup.find(id=ref).get_text(strip=True)
+            for ref in references
+        )
+
+    def meta_policy(attribute, name):
+        tag = soup.head and soup.head.find(
+            "meta", attrs={attribute: re.compile(f"^{name}$", re.I)}
+        )
+        return tag.get("content", "").strip() if tag else ""
+
+    meta_policies = {
+        "content-security-policy": meta_policy(
+            "http-equiv", "content-security-policy"
+        ),
+        "referrer-policy": meta_policy("name", "referrer"),
+    }
     https = urlsplit(final_url).scheme == "https"
     add(
         "https",
@@ -201,7 +235,8 @@ def analyze(
         ),
     ]:
         value = headers.get(key, "")
-        passed = bool(value.strip())
+        meta_value = meta_policies.get(key, "")
+        passed = bool(value.strip() or meta_value)
         if key == "x-content-type-options":
             passed = value.strip().lower() == "nosniff"
         if key == "strict-transport-security":
@@ -216,7 +251,11 @@ def analyze(
             (
                 f"{key}: {value[:350]}"
                 if value
-                else f"The {key} response header is missing."
+                else (
+                    f"Set by a meta tag instead of a response header: {meta_value[:350]}"
+                    if meta_value
+                    else f"The {key} response header is missing."
+                )
             ),
             fix,
         )
@@ -274,14 +313,25 @@ def analyze(
             status=link_status, links=links.get("details", broken), coverage=links
         )
     images = soup.find_all("img")
-    missing_alt = [img for img in images if not img.has_attr("alt")]
+    missing_alt = [
+        img
+        for img in images
+        if not (
+            img.has_attr("alt")
+            or img.has_attr("hidden")
+            or img.get("aria-hidden", "").lower() == "true"
+            or img.get("role", "").lower() in ("presentation", "none")
+            or img.get("aria-label", "").strip()
+            or named_by_reference(img)
+        )
+    ]
     add(
         "image-alt",
         "accessibility",
         "Image alternative text",
         not missing_alt,
         "medium",
-        f"{len(missing_alt)} of {len(images)} images lack an alt attribute. Empty alt attributes are allowed for decorative images.",
+        f"{len(missing_alt)} of {len(images)} images lack an alt attribute or other accessible name. Empty alt attributes are allowed for decorative images.",
         'Add descriptive alt text to informative images; use alt="" only for decorative images. Review text quality manually.',
     )
     lang = soup.html.get("lang", "").strip() if soup.html else ""
@@ -294,7 +344,10 @@ def analyze(
         f'Document language: {lang[:100] or "not declared"}.',
         'Declare the primary language on the html element, for example <html lang="en">.',
     )
-    title = soup.title.get_text(strip=True) if soup.title else ""
+    title_tag = next(
+        (tag for tag in soup.find_all("title") if not tag.find_parent("svg")), None
+    )
+    title = title_tag.get_text(strip=True) if title_tag else ""
     add(
         "page-title",
         "accessibility",
@@ -307,27 +360,24 @@ def analyze(
     labels = {
         label.get("for")
         for label in soup.find_all("label")
-        if label.get_text(strip=True)
+        if label.get("for") and label.get_text(strip=True)
     }
     inputs = [
         el
         for el in soup.find_all(["input", "select", "textarea"])
         if el.get("type", "").lower()
         not in ("hidden", "submit", "reset", "button", "image")
+        and not el.has_attr("hidden")
     ]
     unlabeled = []
     for el in inputs:
-        labelledby = el.get("aria-labelledby", "").split()
-        aria_name = labelledby and all(
-            soup.find(id=ref) and soup.find(id=ref).get_text(strip=True)
-            for ref in labelledby
-        )
         parent_label = el.find_parent("label")
         if not (
             el.get("id") in labels
             or (parent_label and parent_label.get_text(strip=True))
             or el.get("aria-label", "").strip()
-            or aria_name
+            or el.get("title", "").strip()
+            or named_by_reference(el)
         ):
             unlabeled.append(el)
     add(
@@ -355,7 +405,7 @@ def analyze(
     }
 
 
-async def scan_page(url, allowed_origin=None):
+async def scan_page(url, allowed_origin=None, link_cache=None):
     url = validate_url(url)
     connector = aiohttp.TCPConnector(
         resolver=PublicResolver(), use_dns_cache=False, limit=4
@@ -382,7 +432,7 @@ async def scan_page(url, allowed_origin=None):
                         and (urlsplit(current).scheme, urlsplit(current).netloc)
                         != allowed_origin
                     ):
-                        raise ScanError("Redirect leaves the scanned website.")
+                        raise PageSkipped("Redirect leaves the scanned website.")
                     secure_chain = secure_chain and urlsplit(current).scheme == "https"
                     async with client.get(current, allow_redirects=False) as response:
                         if response.status in (301, 302, 303, 307, 308):
@@ -393,12 +443,20 @@ async def scan_page(url, allowed_origin=None):
                                 )
                             current = validate_url(urljoin(str(response.url), location))
                             continue
+                        if response.status in (401, 403, 407):
+                            raise PageSkipped(
+                                f"The website refused the automated scan (HTTP {response.status}), so this page could not be evaluated."
+                            )
+                        if response.status in (429, 503):
+                            raise ScanError(
+                                f"The website is rate limiting or temporarily unavailable (HTTP {response.status}). Please try again later."
+                            )
                         content_type = response.headers.get("Content-Type", "").lower()
                         if not any(
                             kind in content_type
                             for kind in ("text/html", "application/xhtml+xml")
                         ):
-                            raise ScanError(
+                            raise PageSkipped(
                                 "The URL did not return an HTML page. Try a webpage rather than a file or API."
                             )
                         body = bytearray()
@@ -429,7 +487,7 @@ async def scan_page(url, allowed_origin=None):
                 else:
                     raise ScanError("The website exceeded the limit of five redirects.")
         targets, skipped = extract_link_targets(page[4], page[1])
-        links = await check_links(targets, skipped=skipped)
+        links = await check_links(targets, skipped=skipped, cache=link_cache)
         result = analyze(*page, links=links)
     except ScanError:
         raise

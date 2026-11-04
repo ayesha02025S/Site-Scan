@@ -16,7 +16,7 @@ def key_client(issuer):
     )
 
 
-def require_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+def verified_claims(credentials):
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(401, "Please sign in to access your scans.", headers={"WWW-Authenticate": "Bearer"})
     issuer = os.getenv("CLERK_ISSUER_URL", "").rstrip("/")
@@ -40,8 +40,21 @@ def require_user(credentials: HTTPAuthorizationCredentials | None = Depends(bear
         user_id = claims["sub"]
         if not isinstance(user_id, str) or not user_id.startswith("user_") or len(user_id) > 255 or not claims["sid"]:
             raise jwt.InvalidTokenError()
-        return user_id
+        return claims
     except jwt.PyJWKClientConnectionError:
         raise HTTPException(503, "Sign-in verification is temporarily unavailable. Please retry.") from None
     except (jwt.PyJWTError, ValueError, TypeError, KeyError):
         raise HTTPException(401, "Your session is invalid or expired. Please sign in again.", headers={"WWW-Authenticate": "Bearer"}) from None
+
+
+def require_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    return verified_claims(credentials)["sub"]
+
+
+def session_email(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    """Read the optional email claim added by the Clerk session token template."""
+    try:
+        email = verified_claims(credentials).get("email")
+    except HTTPException:
+        return None
+    return email if isinstance(email, str) and "@" in email and len(email) <= 320 else None

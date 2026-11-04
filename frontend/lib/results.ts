@@ -72,6 +72,26 @@ export type Scan = {
   error: string | null;
 };
 
+export type Monitor = {
+  id: string;
+  url: string;
+  frequency: "daily" | "weekly";
+  active: boolean;
+  email: string | null;
+  next_run_at: string;
+  created_at: string;
+};
+export type AppNotification = {
+  id: string;
+  url: string;
+  scan_id: string;
+  kind: "new_issues" | "scan_failed" | "recovered";
+  title: string;
+  body: string;
+  read: boolean;
+  created_at: string;
+};
+
 export function normalizedUrl(value: string) {
   try {
     const url = new URL(value);

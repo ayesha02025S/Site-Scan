@@ -421,3 +421,124 @@ def test_crawl_rejects_external_page_before_request():
         asyncio.run(
             scan_page("https://other.example/", allowed_origin=("https", "example.com"))
         )
+
+
+def checks_for(html, headers=None):
+    report = analyze(
+        "https://example.com/",
+        "https://example.com/",
+        200,
+        headers or {},
+        html,
+        10,
+        100,
+        0,
+    )
+    return {check["id"]: check for check in report["checks"]}
+
+
+def test_policies_set_by_meta_tags_are_recognized():
+    html = (
+        '<html><head><meta http-equiv="Content-Security-Policy" content="default-src \'self\'">'
+        '<meta name="referrer" content="no-referrer"></head></html>'
+    )
+    checks = checks_for(html)
+    assert checks["content-security-policy"]["status"] == "passed"
+    assert "meta tag" in checks["content-security-policy"]["evidence"]
+    assert checks["referrer-policy"]["status"] == "passed"
+
+
+def test_meta_policy_outside_head_or_empty_does_not_count():
+    html = '<html><head><meta name="referrer" content=""></head><body><meta http-equiv="content-security-policy" content="default-src *"></body></html>'
+    checks = checks_for(html)
+    assert checks["content-security-policy"]["status"] == "failed"
+    assert checks["referrer-policy"]["status"] == "failed"
+
+
+def test_images_hidden_or_named_without_alt_pass():
+    html = '<span id="n">Chart</span><img role="presentation"><img aria-hidden="true"><img aria-label="Logo"><img aria-labelledby="n"><img hidden>'
+    assert checks_for(html)["image-alt"]["status"] == "passed"
+    assert checks_for('<img aria-labelledby="missing">')["image-alt"]["status"] == "failed"
+
+
+def test_label_without_for_does_not_label_other_controls():
+    html = '<label>Name <input></label><input>'
+    check = checks_for(html)["form-labels"]
+    assert check["status"] == "failed" and check["evidence"].startswith("1 of 2")
+
+
+def test_title_attribute_names_control_and_hidden_controls_are_ignored():
+    html = '<input title="Search"><input hidden>'
+    assert checks_for(html)["form-labels"]["status"] == "passed"
+
+
+def test_svg_title_is_not_the_page_title():
+    assert checks_for("<svg><title>Icon</title></svg>")["page-title"]["status"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "status,error,message",
+    [(403, "PageSkipped", "refused"), (429, "ScanError", "rate limiting"), (503, "ScanError", "unavailable")],
+)
+def test_block_pages_are_not_scored(status, error, message, monkeypatch):
+    import scanner
+
+    fake_session(monkeypatch, [FakeResponse(status)])
+    with pytest.raises(ScanError, match=message) as caught:
+        asyncio.run(scanner.scan_page("https://example.com"))
+    assert type(caught.value).__name__ == error
+
+
+def run_check_link(url="https://example.com/"):
+    import scanner
+
+    async def run():
+        async with scanner.aiohttp.ClientSession(
+            connector=scanner.aiohttp.TCPConnector(), trust_env=False
+        ) as client:
+            return await scanner.check_link(client, url)
+
+    return asyncio.run(run())
+
+
+def test_transient_server_error_is_retried(monkeypatch):
+    import scanner
+
+    monkeypatch.setattr(scanner, "LINK_RETRY_SECONDS", 0)
+    requests = fake_session(monkeypatch, [FakeResponse(500), FakeResponse(200)])
+    assert run_check_link() == 200
+    assert len(requests) == 2
+
+
+def test_persistent_server_error_stays_broken(monkeypatch):
+    import scanner
+
+    monkeypatch.setattr(scanner, "LINK_RETRY_SECONDS", 0)
+    fake_session(monkeypatch, [FakeResponse(500), FakeResponse(500)])
+    assert run_check_link() == 500
+
+
+@pytest.mark.parametrize("status", [503, 999])
+def test_unavailable_and_nonstandard_links_are_inconclusive(status, monkeypatch):
+    fake_session(monkeypatch, [FakeResponse(status)])
+    assert run_check_link() is None
+
+
+def test_link_cache_reuses_verdicts_and_extends_coverage(monkeypatch):
+    import scanner
+
+    fake_session(monkeypatch, [])
+    calls = []
+
+    async def success(client, url):
+        calls.append(url)
+        return 404 if url.endswith("/0") else 200
+
+    monkeypatch.setattr(scanner, "check_link", success)
+    links = [f"https://example.com/{i}" for i in range(25)]
+    cache = {}
+    first = asyncio.run(scanner.check_links(links, cache=cache))
+    assert first["checked"] == 20 and first["skipped"] == 5
+    second = asyncio.run(scanner.check_links(links, cache=cache))
+    assert second["checked"] == 25 and second["skipped"] == 0
+    assert len(calls) == 25 and len(second["broken"]) == 1

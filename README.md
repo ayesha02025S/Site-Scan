@@ -71,6 +71,8 @@ The backend loads `.env` from the repository root. Existing shell variables take
 | `NEXT_PUBLIC_API_BASE_URL` | API address for the frontend; defaults to `http://localhost:8000`. |
 | `GEMINI_API_KEY` | Optional. Enables AI explanations. Create a free key at [Google AI Studio](https://aistudio.google.com/apikey). |
 | `GEMINI_MODEL` | Gemini model for explanations; defaults to `gemini-flash-lite-latest`. |
+| `RESEND_API_KEY` | Optional. Enables alert emails through [Resend](https://resend.com). |
+| `NOTIFICATION_FROM_EMAIL` | Sender address for alert emails; it must use a domain verified in Resend. |
 
 To use PostgreSQL, create a database and database user, then set `DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/sitescan` in your local `.env`. The backend creates the initial scans table on startup. Startup also applies the backward-compatible scan owner column migration. Restart the backend after changing its configuration; restart or rebuild the frontend after changing its public API URL.
 
@@ -78,13 +80,15 @@ Local environment files, database files, dependencies, and generated builds are 
 
 ## Checks and scoring
 
-- Performance: successful HTTP response, HTML fetch time ≤ 1,500 ms, decoded HTML size ≤ 300 KB, and up to 20 unique HTTP/HTTPS links checked for 404, 410, or server errors. Malformed/private links are skipped. Timeouts, connection failures, authentication restrictions, and rate limits are inconclusive. Counts distinguish discovered, checked, skipped, and inconclusive links.
+- Performance: successful HTTP response, HTML fetch time ≤ 1,500 ms, decoded HTML size ≤ 300 KB, and up to 20 new HTTP/HTTPS links per page checked for 404, 410, or server errors. Verdicts are reused for links already checked on other pages. Server errors are retried once before a link counts as broken. Malformed/private links are skipped. Timeouts, connection failures, authentication restrictions, rate limits, HTTP 503, and non-standard status codes are inconclusive. Counts distinguish discovered, checked, skipped, and inconclusive links.
 - Accessibility: non-empty page title and language, image alt attributes, and detectable form labels in static HTML. Chromium also renders the page and runs nine axe-core rules for color contrast, accessible button names, and ARIA attributes, values, roles, and relationships. Expand a finding to see affected CSS selectors, HTML snippets, and specific fixes. At most 20 affected elements per rule are saved; the total count remains visible.
 - Security: HTTPS from the submitted URL through the final page, CSP presence, positive HSTS max-age on HTTPS, `nosniff`, and Referrer-Policy presence.
 
 Checks have weights of 3 (high), 2 (medium), or 1 (low). A category score is the percentage of evaluated weight earned by passed checks. Inconclusive and not-applicable checks receive no credit and are excluded from the denominator. A partial report can therefore have a high score; review the coverage notice as well as the score. Overall health is the rounded mean of the three category scores. Missing images or supported form controls pass their static checks because no matching issues were found. Rendered rules without applicable elements and pages without links are marked not applicable. Browser/resource failures never turn into passing results.
 
-These are basic project heuristics, not a Lighthouse score, WCAG certification, or a complete security audit. Fetch time measures server-side HTML retrieval including redirects, not browser rendering or Core Web Vitals. The browser audit checks a desktop snapshot at 1280 × 900 after load and a short settling interval. It does not certify every interaction, responsive breakpoint, embedded frame, keyboard behavior, or the quality of labels and alt text. Restricted or failed resources, page script errors, and embedded frames mark coverage partial; confirmed violations are retained and other rendered rules become inconclusive. Header presence checks do not validate complete policies.
+These are basic project heuristics, not a Lighthouse score, WCAG certification, or a complete security audit. Fetch time measures server-side HTML retrieval including redirects, not browser rendering or Core Web Vitals. The browser audit checks a desktop snapshot at 1280 × 900 after load and a short settling interval. It does not certify every interaction, responsive breakpoint, embedded frame, keyboard behavior, or the quality of labels and alt text. Restricted or failed resources, page script errors, and embedded frames mark coverage partial; confirmed violations are retained and other rendered rules become inconclusive. Header presence checks do not validate complete policies; CSP and Referrer-Policy also count when set by a meta tag in the document head.
+
+A page answering HTTP 401, 403, 407, 429, or 503 is not scored, because the response is a block or error page rather than the site's content. On the starting page this fails the scan with an explanation. On other pages, 429 and 503 mark the page failed, and access restrictions mark it skipped.
 
 ## API
 
@@ -96,6 +100,10 @@ These are basic project heuristics, not a Lighthouse score, WCAG certification, 
 | `GET` | `/scans` | Latest 100 scans, newest first |
 | `GET` | `/scans/{id}/export` | Download a saved scan as JSON |
 | `POST` | `/scans/{id}/explain` | Plain-language summary and top three fixes for a completed scan |
+| `GET`, `POST` | `/monitors` | List monitored websites, or add one with `{"url":"...","frequency":"daily"}` |
+| `PATCH`, `DELETE` | `/monitors/{id}` | Pause or resume with `{"active":false}`, or remove a monitor |
+| `GET` | `/notifications` | Latest 50 alerts |
+| `POST` | `/notifications/read` | Mark all alerts read |
 
 Scans move through `queued`, `running`, and `completed` or `failed`. Each scan is saved in the database. Up to three scans run concurrently, with at most 12 pending tasks in one API process. Tasks run in-process for M1; run one Uvicorn worker. On restart, unfinished scans are marked failed with an explanation. Completed history survives restarts.
 
@@ -127,7 +135,7 @@ If your Mac reports `EMFILE` watcher errors, start the frontend with `WATCHPACK_
 
 ## M1 boundaries
 
-The scanner crawls up to 20 page attempts using breadth-first discovery of HTML links on the starting page’s final origin (scheme and host). Fragments and duplicate URLs are deduplicated; query strings and trailing slashes remain distinct. Child-page redirects outside that origin are rejected. Failed child pages are recorded without discarding successful results. A four-minute total budget bounds the scan. Scores combine evaluated checks from completed pages; failed pages are reported separately. Findings identify their source page, and exports include page summaries. JavaScript-only navigation is not discovered. The scanner follows at most five redirects, accepts HTTP/HTTPS on ports 80 and 443, and limits decoded HTML to 2 MB. Page fetching has a 25-second deadline, link checks an 8-second budget, and the browser phase a separate 35-second deadline. Static/link results remain available if the browser fails.
+The scanner crawls up to 20 page attempts using breadth-first discovery of HTML links on the starting page’s final origin (scheme and host). Fragments, duplicate URLs, trailing slashes, and tracking parameters such as `utm_*` and `gclid` are deduplicated; other query strings remain distinct. Links to files such as PDFs and images are not crawled. Child pages that redirect off the origin, require access, or do not return HTML are recorded as skipped and do not use the page budget or make the crawl partial. Failed child pages are recorded without discarding successful results. A four-minute total budget bounds the scan. Scores combine evaluated checks from completed pages; failed pages are reported separately. Findings identify their source page, and exports include page summaries. JavaScript-only navigation is not discovered. The scanner follows at most five redirects, accepts HTTP/HTTPS on ports 80 and 443, and limits decoded HTML to 2 MB. Page fetching has a 25-second deadline, link checks an 8-second budget, and the browser phase a separate 35-second deadline. Static/link results remain available if the browser fails.
 
 Browser HTTP requests are intercepted and fetched through the same public-only DNS resolver, pinning validated addresses to the connection. Every redirect is validated. Browser traffic that bypasses interception is sent to a local deny proxy; WebSockets and service workers are blocked. Resource requests are limited to GET, 80 requests, 3 MB per resource, and 15 MB total. No user cookies or credentials are forwarded; TLS checks remain enabled. Fetched page scripts execute in an isolated, sandboxed Chromium instance that is closed after each audit. Embedded frames and interaction-dependent states are outside this audit's coverage. Use container-level egress restrictions and resource limits before production deployment.
 
@@ -151,6 +159,8 @@ Site-Scan/
 │   ├── package-lock.json
 │   ├── scanner.py
 │   ├── database.py
+│   ├── crawler.py
+│   ├── monitors.py
 │   ├── tests/
 │   ├── requirements.txt
 │   └── requirements.lock.txt
@@ -173,5 +183,25 @@ For local development, set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in `frontend/.env
 For deployment, set the public key in Vercel and the issuer plus `CLERK_AUTHORIZED_PARTIES=https://site-scan-liard.vercel.app` in Render, then deploy both applications. The current Clerk instance is a development instance for capstone testing; use Clerk's production setup before a production launch.
 
 On startup the database adds an indexed, nullable owner ID without deleting existing reports. Older shared reports have no verified owner and are excluded from account histories. Run a new scan after signing in; never assign legacy reports based only on a browser-supplied ID.
+
+## Monitoring and alerts
+
+Open **Monitoring** to scan up to five websites automatically, daily or weekly. The first scan starts immediately as a baseline, and scheduled scans appear in your history like any other.
+
+A scheduled scan creates an alert when:
+
+- a check that passed in the previous scan of that URL now fails. A slow page fetch alone does not alert because a single sample can vary. Inconclusive results, new checks, and scans from a different scanner version do not count as regressions.
+- two scans in a row fail. The first failure is retried after 15 minutes and is not reported, so a brief outage stays quiet.
+- a site that triggered a failure alert can be scanned again.
+
+Alerts appear in the app with an unread count. To also send them by email, set `RESEND_API_KEY` and `NOTIFICATION_FROM_EMAIL`, then add this claim to your Clerk session token under **Sessions > Customize session token**:
+
+```json
+{ "email": "{{user.primary_email_address}}" }
+```
+
+The address is saved when a monitor is created, so it comes from the signed-in account rather than a form field. Without the key or claim, alerts stay in the app. A failed email is logged and the in-app alert remains.
+
+The scheduler checks for due scans every minute inside the API process, so it needs the single-worker deployment described in `docs/deployment.md`. Due times are stored in the database: scans missed while the server was stopped or asleep start when it next runs. A scheduled scan interrupted by a restart is marked failed in your history and runs again 15 minutes after startup, without counting toward a failure alert.
 
 Run backend tests with `cd backend && .venv/bin/python -m pytest -q`. Authentication tests cover invalid tokens, expiry, issuer and origin mismatches, account isolation, protected exports and explanations, and legacy migration. Frontend checks are `npm run build`, `npm test`, and `npm run format:check` from `frontend`.

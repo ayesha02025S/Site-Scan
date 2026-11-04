@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,14 +11,38 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
 
-from database import Base, Scan, Session, engine, serialize, initialize_database
-from auth import require_user
+from database import (
+    Base,
+    Monitor,
+    Notification,
+    Scan,
+    Session,
+    engine,
+    initialize_database,
+    serialize,
+    serialize_monitor,
+    serialize_notification,
+)
+from auth import require_user, session_email
 from explain import explain_scan
 from scanner import ScanError, validate_url
 from crawler import scan_website
+from monitors import (
+    FAILURES_BEFORE_ALERT,
+    FREQUENCIES,
+    MAX_MONITORS_PER_USER,
+    RETRY_AFTER_FAILURE,
+    failure_alert,
+    issues_alert,
+    new_issues,
+    recovery_alert,
+    send_email,
+)
 
 logger = logging.getLogger(__name__)
 tasks = set()
+MAX_QUEUED_SCANS = 12
+SCHEDULER_SECONDS = 60
 slots = asyncio.Semaphore(max(1, min(3, int(os.getenv("MAX_CONCURRENT_SCANS", "3")))))
 
 
@@ -24,6 +50,17 @@ slots = asyncio.Semaphore(max(1, min(3, int(os.getenv("MAX_CONCURRENT_SCANS", "3
 async def lifespan(app):
     initialize_database(engine)
     with Session.begin() as db:
+        interrupted = db.execute(
+            select(Scan.owner_id, Scan.url).where(Scan.status.in_(["queued", "running"]))
+        ).all()
+        # Delayed so a scan that crashes the server cannot cause a restart loop.
+        retry_at = datetime.now(timezone.utc) + RETRY_AFTER_FAILURE
+        for owner_id, url in set(interrupted):
+            db.execute(
+                update(Monitor)
+                .where(Monitor.owner_id == owner_id, Monitor.url == url, Monitor.active)
+                .values(next_run_at=retry_at)
+            )
         db.execute(
             update(Scan)
             .where(Scan.status.in_(["queued", "running"]))
@@ -32,7 +69,10 @@ async def lifespan(app):
                 error="The server restarted before this scan finished. Please run it again.",
             )
         )
+    scheduler_task = asyncio.create_task(scheduler())
     yield
+    scheduler_task.cancel()
+    await asyncio.gather(scheduler_task, return_exceptions=True)
     for task in list(tasks):
         task.cancel()
     if tasks:
@@ -46,7 +86,7 @@ app.add_middleware(
         os.getenv("FRONTEND_ORIGIN", "http://localhost:3000"),
         "http://127.0.0.1:3000",
     ],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
@@ -54,7 +94,7 @@ app.add_middleware(
 @app.middleware("http")
 async def private_responses(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith("/scans"):
+    if request.url.path.startswith(("/scans", "/monitors", "/notifications")):
         response.headers["Cache-Control"] = "private, no-store"
     return response
 
@@ -68,7 +108,15 @@ class ScanRequest(BaseModel):
         return validate_url(value)
 
 
-async def run_scan(scan_id, url):
+class MonitorRequest(ScanRequest):
+    frequency: Literal["daily", "weekly"] = "daily"
+
+
+class MonitorUpdate(BaseModel):
+    active: bool
+
+
+async def run_scan(scan_id, url, monitor_id=None):
     async with slots:
         with Session.begin() as db:
             scan = db.get(Scan, scan_id)
@@ -90,6 +138,92 @@ async def run_scan(scan_id, url):
                     if isinstance(exc, ScanError)
                     else "The scan could not be completed. Please try again."
                 )
+    if monitor_id:
+        try:
+            await finish_monitor_run(monitor_id, scan_id)
+        except Exception:
+            logger.exception("Monitor follow-up failed: %s", monitor_id)
+
+
+def start_scan(scan_id, url, monitor_id=None):
+    task = asyncio.create_task(run_scan(scan_id, url, monitor_id))
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+
+def run_due_monitors():
+    now = datetime.now(timezone.utc)
+    started = []
+    with Session.begin() as db:
+        due = db.scalars(
+            select(Monitor)
+            .where(Monitor.active, Monitor.next_run_at <= now)
+            .order_by(Monitor.next_run_at)
+            .limit(max(0, MAX_QUEUED_SCANS - len(tasks)))
+        )
+        for monitor in due:
+            monitor.next_run_at = now + FREQUENCIES[monitor.frequency]
+            scan = Scan(url=monitor.url, owner_id=monitor.owner_id)
+            db.add(scan)
+            db.flush()
+            started.append((scan.id, monitor.url, monitor.id))
+    for run in started:
+        start_scan(*run)
+
+
+async def scheduler():
+    while True:
+        try:
+            run_due_monitors()
+        except Exception:
+            logger.exception("Scheduled scan check failed")
+        await asyncio.sleep(SCHEDULER_SECONDS)
+
+
+async def finish_monitor_run(monitor_id, scan_id):
+    alerts = []
+    with Session.begin() as db:
+        monitor = db.get(Monitor, monitor_id)
+        scan = db.get(Scan, scan_id)
+        if monitor is None:
+            return
+        email = monitor.email
+        if scan.status == "failed":
+            monitor.failures += 1
+            if monitor.failures < FAILURES_BEFORE_ALERT:
+                monitor.next_run_at = datetime.now(timezone.utc) + RETRY_AFTER_FAILURE
+            elif monitor.failures == FAILURES_BEFORE_ALERT:
+                alerts.append(failure_alert(monitor.url, scan.error))
+        else:
+            if monitor.failures >= FAILURES_BEFORE_ALERT:
+                alerts.append(recovery_alert(monitor.url))
+            monitor.failures = 0
+            previous = db.scalars(
+                select(Scan)
+                .where(
+                    Scan.owner_id == monitor.owner_id,
+                    Scan.url == monitor.url,
+                    Scan.status == "completed",
+                    Scan.id != scan.id,
+                    Scan.created_at < scan.created_at,
+                )
+                .order_by(Scan.created_at.desc())
+                .limit(1)
+            ).first()
+            issues = new_issues(scan.result, previous.result) if previous else []
+            if issues:
+                alerts.append(issues_alert(monitor.url, issues))
+        for alert in alerts:
+            db.add(
+                Notification(
+                    owner_id=monitor.owner_id,
+                    url=monitor.url,
+                    scan_id=scan.id,
+                    **alert,
+                )
+            )
+    for alert in alerts:
+        await send_email(email, alert["title"], alert["body"])
 
 
 @app.get("/health")
@@ -99,16 +233,14 @@ def health():
 
 @app.post("/scans", status_code=202)
 async def create_scan(request: ScanRequest, owner_id: str = Depends(require_user)):
-    if len(tasks) >= 12:
+    if len(tasks) >= MAX_QUEUED_SCANS:
         raise HTTPException(429, "The scan queue is full. Please try again shortly.")
     with Session.begin() as db:
         scan = Scan(url=request.url, owner_id=owner_id)
         db.add(scan)
         db.flush()
         response = serialize(scan)
-    task = asyncio.create_task(run_scan(scan.id, scan.url))
-    tasks.add(task)
-    task.add_done_callback(tasks.discard)
+    start_scan(scan.id, scan.url)
     return response
 
 
@@ -163,3 +295,93 @@ def export_scan(scan_id: str, owner_id: str = Depends(require_user)):
                 "Content-Disposition": f'attachment; filename="site-scan-{scan.id}.json"'
             },
         )
+
+
+@app.get("/monitors")
+def list_monitors(owner_id: str = Depends(require_user)):
+    with Session() as db:
+        return [
+            serialize_monitor(monitor)
+            for monitor in db.scalars(
+                select(Monitor)
+                .where(Monitor.owner_id == owner_id)
+                .order_by(Monitor.created_at.desc())
+            )
+        ]
+
+
+@app.post("/monitors", status_code=201)
+async def create_monitor(
+    request: MonitorRequest,
+    owner_id: str = Depends(require_user),
+    email: str | None = Depends(session_email),
+):
+    with Session.begin() as db:
+        existing = db.scalars(select(Monitor).where(Monitor.owner_id == owner_id)).all()
+        if any(monitor.url == request.url for monitor in existing):
+            raise HTTPException(409, "This website is already being monitored.")
+        if len(existing) >= MAX_MONITORS_PER_USER:
+            raise HTTPException(
+                409, f"You can monitor up to {MAX_MONITORS_PER_USER} websites."
+            )
+        monitor = Monitor(
+            owner_id=owner_id,
+            url=request.url,
+            frequency=request.frequency,
+            email=email,
+            next_run_at=datetime.now(timezone.utc),
+        )
+        db.add(monitor)
+        db.flush()
+        monitor_id = monitor.id
+    run_due_monitors()
+    with Session() as db:
+        return serialize_monitor(db.get(Monitor, monitor_id))
+
+
+@app.patch("/monitors/{monitor_id}")
+def update_monitor(
+    monitor_id: str, request: MonitorUpdate, owner_id: str = Depends(require_user)
+):
+    with Session.begin() as db:
+        monitor = db.get(Monitor, monitor_id)
+        if monitor is None or monitor.owner_id != owner_id:
+            raise HTTPException(404, "Monitor not found.")
+        monitor.active = request.active
+        db.flush()
+        return serialize_monitor(monitor)
+
+
+@app.delete("/monitors/{monitor_id}")
+def delete_monitor(monitor_id: str, owner_id: str = Depends(require_user)):
+    with Session.begin() as db:
+        monitor = db.get(Monitor, monitor_id)
+        if monitor is None or monitor.owner_id != owner_id:
+            raise HTTPException(404, "Monitor not found.")
+        db.delete(monitor)
+    return {"deleted": True}
+
+
+@app.get("/notifications")
+def list_notifications(owner_id: str = Depends(require_user)):
+    with Session() as db:
+        return [
+            serialize_notification(notification)
+            for notification in db.scalars(
+                select(Notification)
+                .where(Notification.owner_id == owner_id)
+                .order_by(Notification.created_at.desc())
+                .limit(50)
+            )
+        ]
+
+
+@app.post("/notifications/read")
+def mark_notifications_read(owner_id: str = Depends(require_user)):
+    with Session.begin() as db:
+        db.execute(
+            update(Notification)
+            .where(Notification.owner_id == owner_id, Notification.read.is_(False))
+            .values(read=True)
+        )
+    return {"read": True}

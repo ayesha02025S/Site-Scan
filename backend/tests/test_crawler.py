@@ -29,7 +29,7 @@ def report(url, links=()):
 def test_limit_dedup_scope_and_page_ids(monkeypatch):
     calls = []
 
-    async def scan(url, allowed_origin=None):
+    async def scan(url, allowed_origin=None, link_cache=None):
         calls.append(url)
         return report(
             url,
@@ -51,7 +51,7 @@ def test_limit_dedup_scope_and_page_ids(monkeypatch):
 
 
 def test_child_failure_and_nested_discovery(monkeypatch):
-    async def scan(url, allowed_origin=None):
+    async def scan(url, allowed_origin=None, link_cache=None):
         if url.endswith("/bad"):
             raise ScanError("Unavailable")
         links = {
@@ -80,7 +80,7 @@ def test_root_failure(monkeypatch):
 
 
 def test_deadline_keeps_completed_pages(monkeypatch):
-    async def scan(url, allowed_origin=None):
+    async def scan(url, allowed_origin=None, link_cache=None):
         if allowed_origin:
             await asyncio.sleep(1)
         return report(url, ["https://example.com/slow"])
@@ -93,7 +93,7 @@ def test_deadline_keeps_completed_pages(monkeypatch):
 
 
 def test_redirect_aliases_do_not_duplicate_findings(monkeypatch):
-    async def scan(url, allowed_origin=None):
+    async def scan(url, allowed_origin=None, link_cache=None):
         if not allowed_origin:
             return report(
                 url, ["https://example.com/alias", "https://example.com/target"]
@@ -109,7 +109,7 @@ def test_redirect_aliases_do_not_duplicate_findings(monkeypatch):
 def test_same_origin_excludes_subdomains_and_scheme_changes(monkeypatch):
     calls = []
 
-    async def scan(url, allowed_origin=None):
+    async def scan(url, allowed_origin=None, link_cache=None):
         calls.append(url)
         return report(
             url,
@@ -123,3 +123,48 @@ def test_same_origin_excludes_subdomains_and_scheme_changes(monkeypatch):
     monkeypatch.setattr(crawler, "scan_page", scan)
     asyncio.run(crawler.scan_website("https://example.com/"))
     assert calls == ["https://example.com/", "https://example.com/a"]
+
+
+def test_non_pages_are_not_crawled_and_skips_keep_full_coverage(monkeypatch):
+    from scanner import PageSkipped
+
+    calls = []
+
+    async def scan(url, allowed_origin=None, link_cache=None):
+        calls.append(url)
+        if url.endswith("/feed"):
+            raise PageSkipped("The URL did not return an HTML page.")
+        return report(
+            url,
+            [
+                "https://example.com/guide.PDF",
+                "https://example.com/feed",
+                "https://example.com/about/",
+                "https://example.com/about",
+                "https://example.com/about?utm_source=mail",
+                "https://example.com/list?page=2",
+            ],
+        )
+
+    monkeypatch.setattr(crawler, "scan_page", scan)
+    result = asyncio.run(crawler.scan_website("https://example.com/"))
+    assert calls == [
+        "https://example.com/",
+        "https://example.com/feed",
+        "https://example.com/about/",
+        "https://example.com/list?page=2",
+    ]
+    assert result["crawl"]["status"] == "completed"
+    assert result["crawl"]["attempted"] == 3
+    assert [p["status"] for p in result["pages"]].count("skipped") == 1
+
+
+def test_root_page_that_cannot_be_audited_fails_the_scan(monkeypatch):
+    from scanner import PageSkipped
+
+    async def scan(url, allowed_origin=None, link_cache=None):
+        raise PageSkipped("The website refused the automated scan (HTTP 403).")
+
+    monkeypatch.setattr(crawler, "scan_page", scan)
+    with pytest.raises(ScanError, match="refused"):
+        asyncio.run(crawler.scan_website("https://example.com/"))
