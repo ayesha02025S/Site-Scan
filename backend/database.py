@@ -138,6 +138,31 @@ def serialize_notification(notification):
 
 def initialize_database(bind):
     Base.metadata.create_all(bind)
+    # Add new preference columns to an existing user_preferences table.
+    if "user_preferences" in inspect(bind).get_table_names():
+        existing_columns = {
+            column["name"]
+            for column in inspect(bind).get_columns("user_preferences")
+        }
+
+        preference_migrations = {
+            "day_theme": "VARCHAR(32) NOT NULL DEFAULT 'light'",
+            "night_theme": "VARCHAR(32) NOT NULL DEFAULT 'dark'",
+            "day_start": "VARCHAR(5) NOT NULL DEFAULT '07:00'",
+            "night_start": "VARCHAR(5) NOT NULL DEFAULT '19:00'",
+            "text_color": "VARCHAR(16) NOT NULL DEFAULT 'off'",
+        }
+
+        with bind.begin() as connection:
+            for column_name, column_definition in preference_migrations.items():
+                if column_name not in existing_columns:
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE user_preferences "
+                            f"ADD COLUMN {column_name} {column_definition}"
+                        )
+                    )
+
     with bind.begin() as connection:
         columns = {column["name"] for column in inspect(connection).get_columns("scans")}
         if "owner_id" not in columns:
@@ -146,3 +171,54 @@ def initialize_database(bind):
         if "monitor_id" not in columns:
             connection.execute(text("ALTER TABLE scans ADD COLUMN monitor_id VARCHAR(36)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_scans_monitor_id ON scans (monitor_id)"))
+
+# Stores all preferences
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    owner_id: Mapped[str] = mapped_column(
+        String(255),
+        primary_key=True,
+    )
+
+    theme: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="dark",
+        server_default="dark",
+    )
+
+    day_theme: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="light",
+        server_default="light",
+    )
+
+    night_theme: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="dark",
+        server_default="dark",
+    )
+
+    day_start: Mapped[str] = mapped_column(
+        String(5),
+        nullable=False,
+        default="07:00",
+        server_default="07:00",
+    )
+
+    night_start: Mapped[str] = mapped_column(
+        String(5),
+        nullable=False,
+        default="19:00",
+        server_default="19:00",
+    )
+
+    text_color: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="off",
+        server_default="off",
+    )
