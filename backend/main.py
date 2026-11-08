@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, update
 
 from database import (
@@ -22,6 +22,7 @@ from database import (
     serialize,
     serialize_monitor,
     serialize_notification,
+    UserPreference,
 )
 from auth import require_user, session_email
 from explain import explain_scan
@@ -86,7 +87,7 @@ app.add_middleware(
         os.getenv("FRONTEND_ORIGIN", "http://localhost:3000"),
         "http://127.0.0.1:3000",
     ],
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
@@ -94,7 +95,7 @@ app.add_middleware(
 @app.middleware("http")
 async def private_responses(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(("/scans", "/monitors", "/notifications")):
+    if request.url.path.startswith(("/scans", "/monitors", "/notifications", "/preferences")):
         response.headers["Cache-Control"] = "private, no-store"
     return response
 
@@ -412,3 +413,119 @@ def mark_notifications_read(owner_id: str = Depends(require_user)):
             .values(read=True)
         )
     return {"read": True}
+
+ThemeName = Literal[
+    "light",
+    "dark",
+    "navy",
+    "pink",
+    "lavender",
+    "forest",
+    "confetti",
+    "red-void",
+]
+
+ThemeSelection = Literal[
+    "light",
+    "dark",
+    "navy",
+    "pink",
+    "lavender",
+    "forest",
+    "confetti",
+    "red-void",
+    "systematic",
+]
+
+TextColor = Literal[
+    "off",
+    "white",
+    "off-white",
+    "black",
+]
+
+class PreferencesUpdate(BaseModel):
+    theme: ThemeSelection
+
+    day_theme: ThemeName = "light"
+
+    night_theme: ThemeName = "dark"
+
+    day_start: str = Field(
+        default="07:00",
+        pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+    )
+
+    night_start: str = Field(
+        default="19:00",
+        pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+    )
+
+    text_color: TextColor = "off"
+
+@app.get("/preferences")
+def get_preferences(
+    owner_id: str = Depends(require_user),
+):
+    with Session() as session:
+        preference = session.get(UserPreference, owner_id)
+
+        if preference is None:
+            return {
+                "theme": "dark",
+                "day_theme": "light",
+                "night_theme": "dark",
+                "day_start": "07:00",
+                "night_start": "19:00",
+                "text_color": "off",
+            }
+
+        return {
+            "theme": preference.theme,
+            "day_theme": preference.day_theme,
+            "night_theme": preference.night_theme,
+            "day_start": preference.day_start,
+            "night_start": preference.night_start,
+            "text_color": preference.text_color,
+        }
+
+@app.put("/preferences")
+def update_preferences(
+    payload: PreferencesUpdate,
+    owner_id: str = Depends(require_user),
+):
+    with Session() as session:
+        preference = session.get(UserPreference, owner_id)
+
+        if preference is None:
+            preference = UserPreference(
+                owner_id=owner_id,
+                theme=payload.theme,
+                day_theme=payload.day_theme,
+                night_theme=payload.night_theme,
+                day_start=payload.day_start,
+                night_start=payload.night_start,
+                text_color=payload.text_color,
+            )
+
+            session.add(preference)
+
+        else:
+            preference.theme = payload.theme
+            preference.day_theme = payload.day_theme
+            preference.night_theme = payload.night_theme
+            preference.day_start = payload.day_start
+            preference.night_start = payload.night_start
+            preference.text_color = payload.text_color
+
+        session.commit()
+        session.refresh(preference)
+
+        return {
+            "theme": preference.theme,
+            "day_theme": preference.day_theme,
+            "night_theme": preference.night_theme,
+            "day_start": preference.day_start,
+            "night_start": preference.night_start,
+            "text_color": preference.text_color,
+        }
