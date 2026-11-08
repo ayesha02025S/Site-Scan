@@ -26,6 +26,7 @@ import {
   Sparkles,
   X,
   Zap,
+  Palette,
 } from "lucide-react";
 
 import {
@@ -43,6 +44,9 @@ import { useAuth, UserButton } from "@clerk/nextjs";
 import AccountGate from "../components/AccountGate";
 import HealthTrends from "../components/HealthTrends";
 import Monitoring from "../components/Monitoring";
+import AppearanceSettings from "../components/AppearanceSettings";
+import AdjustmentsSettings from "../components/AdjustmentsSettings";
+import { ThemeProvider } from "../components/ThemeProvider";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const categories: Category[] = ["performance", "accessibility", "security"];
@@ -109,7 +113,9 @@ async function authenticatedRequest<T>(
 export default function Home() {
   return (
     <AccountGate>
-      <Dashboard />
+      <ThemeProvider>
+        <Dashboard />
+      </ThemeProvider>
     </AccountGate>
   );
 }
@@ -364,7 +370,54 @@ function Dashboard() {
           </button>
         </nav>
         <div className="account-menu">
-          <UserButton />
+          <UserButton
+            appearance={{
+              variables: {
+                colorBackground: "#101214",
+                colorForeground: "#e8e8e8",
+                colorPrimary: "#bac5b4",
+                colorPrimaryForeground: "#101214",
+                colorInput: "#0d1012",
+                colorInputForeground: "#e8e8e8",
+                colorNeutral: "#e8e8e8",
+                colorMuted: "#777777",
+                colorBorder: "#292d30",
+                colorRing: "#bac5b4",
+              },
+            }}
+            userProfileProps={{
+              appearance: {
+                variables: {
+                  colorBackground: "#101214",
+                  colorForeground: "#ffffff",
+                  colorPrimary: "#bac5b4",
+                  colorPrimaryForeground: "#101214",
+                  colorInput: "#0d1012",
+                  colorInputForeground: "#e8e8e8",
+                  colorNeutral: "#a0a0a0",
+                  colorMuted: "#1e2124",
+                  colorBorder: "#bac5b4",
+                  colorRing: "#bac5b4",
+                },
+              },
+            }}
+          >
+            <UserButton.UserProfilePage
+              label="Appearance"
+              url="appearance"
+              labelIcon={<Palette size={16} />}
+            >
+              <AppearanceSettings />
+            </UserButton.UserProfilePage>
+
+            <UserButton.UserProfilePage
+              label="Adjustments"
+              url="adjustments"
+              labelIcon={<SlidersHorizontal size={16} />}
+            >
+              <AdjustmentsSettings />
+            </UserButton.UserProfilePage>
+          </UserButton>
           <span>Your workspace</span>
         </div>
         <div className="nav-status">
@@ -418,9 +471,9 @@ function Dashboard() {
                 <svg viewBox="0 0 600 470" fill="none">
                   <defs>
                     <radialGradient id="globe-light" cx=".35" cy=".25" r=".8">
-                      <stop stopColor="#3a4146" />
-                      <stop offset=".45" stopColor="#171c20" />
-                      <stop offset="1" stopColor="#050607" />
+                      <stop stopColor="var(--globe-stop-1)" />
+                      <stop offset=".45" stopColor="var(--globe-stop-2)" />
+                      <stop offset="1" stopColor="var(--globe-stop-3)" />
                     </radialGradient>
                     <linearGradient
                       id="line-light"
@@ -430,9 +483,9 @@ function Dashboard() {
                       y2="420"
                       gradientUnits="userSpaceOnUse"
                     >
-                      <stop stopColor="#b7c3cb" stopOpacity=".8" />
-                      <stop offset=".45" stopColor="#6e7c87" stopOpacity=".4" />
-                      <stop offset="1" stopColor="#29313a" stopOpacity=".1" />
+                      <stop stopColor="var(--globe-line-1)" stopOpacity=".8" />
+                      <stop offset=".45" stopColor="var(--globe-line-2)" stopOpacity=".4" />
+                      <stop offset="1" stopColor="var(--globe-line-3)" stopOpacity=".1" />
                     </linearGradient>
                     <clipPath id="sphere-clip">
                       <circle cx="300" cy="235" r="174" />
@@ -474,7 +527,7 @@ function Dashboard() {
                       cy="235"
                       rx="253"
                       ry="62"
-                      stroke="#8295a3"
+                      stroke="var(--globe-orbit)"
                       strokeOpacity=".25"
                       strokeWidth=".7"
                     />
@@ -483,22 +536,22 @@ function Dashboard() {
                       cy="235"
                       rx="231"
                       ry="204"
-                      stroke="#778792"
+                      stroke="var(--globe-orbit-soft)"
                       strokeOpacity=".12"
                       strokeDasharray="2 8"
                     />
-                    <circle cx="65" cy="211" r="3" fill="#bbc8d1" />
-                    <circle cx="441" cy="86" r="2" fill="#899ba8" />
+                    <circle cx="65" cy="211" r="3" fill="var(--globe-dot-1)" />
+                    <circle cx="441" cy="86" r="2" fill="var(--globe-dot-2)" />
                   </g>
                   <path
                     d="M39 395h25m-12-12v25M536 68h25m-12-12v25"
-                    stroke="#707c84"
+                    stroke="var(--globe-corner)"
                     strokeWidth=".6"
                   />
                   <text
                     x="65"
                     y="450"
-                    fill="#697781"
+                    fill="var(--globe-label)"
                     fontSize="7"
                     fontFamily="monospace"
                     letterSpacing="2"
