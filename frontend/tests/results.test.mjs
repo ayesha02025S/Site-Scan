@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   compareResults,
+  letterGrade,
   normalizedUrl,
   previousScan,
   resultLabel,
@@ -124,4 +125,10 @@ test("trends group normalized starting URLs, exclude unfinished scans, and sort 
   );
   assert.equal(trendScans([], base).length, 0);
   assert.equal(scans[0].id, "b");
+});
+test("scores map to letter grades", () => {
+  assert.deepEqual(
+    [100, 90, 89, 80, 79, 70, 69, 60, 59, 0].map(letterGrade),
+    ["A", "A", "B", "B", "C", "C", "D", "D", "F", "F"],
+  );
 });

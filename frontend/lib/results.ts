@@ -186,3 +186,11 @@ export function trendScans(scans: Scan[], selected: Scan) {
         a.id.localeCompare(b.id),
     );
 }
+
+export function letterGrade(score: number) {
+  if (score >= 90) return "A";
+  if (score >= 80) return "B";
+  if (score >= 70) return "C";
+  if (score >= 60) return "D";
+  return "F";
+}

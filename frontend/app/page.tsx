@@ -19,11 +19,14 @@ import {
   Layers3,
   LoaderCircle,
   Plus,
+  Printer,
   Radar,
+  RotateCw,
   Search,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
   X,
   Zap,
   Palette,
@@ -35,6 +38,7 @@ import {
   type Explanation,
   type Scan,
   compareResults,
+  letterGrade,
   previousScan,
   resultClass,
   resultLabel,
@@ -306,6 +310,25 @@ function Dashboard() {
     const item = scans.find((candidate) => candidate.id === scanId);
     if (item) selectScan(item);
     else setError("That report is no longer in your latest 100 scans.");
+  }
+  async function deleteScan(item: Scan) {
+    if (!window.confirm(`Delete the scan of ${hostname(item.url)}? This cannot be undone.`))
+      return;
+    revision.current += 1;
+    try {
+      await request(`/scans/${item.id}`, { method: "DELETE" });
+      const remaining = scans.filter((candidate) => candidate.id !== item.id);
+      setScans(remaining);
+      if (selected === item.id) setSelected(remaining[0]?.id || null);
+    } catch (exc) {
+      setError((exc as Error).message);
+    }
+  }
+  function downloadPdf() {
+    // Show every finding, then let the browser's print dialog save it as a PDF.
+    setFilter("all");
+    setOnlyIssues(false);
+    setTimeout(() => window.print(), 100);
   }
   function newScan() {
     setView("overview");
@@ -804,6 +827,12 @@ function Dashboard() {
                             </div>
                             <div>
                               <span
+                                className={`grade-badge ${tone(result.score)}`}
+                                title="Letter grade: A 90+, B 80+, C 70+, D 60+, F below 60"
+                              >
+                                {letterGrade(result.score)}
+                              </span>
+                              <span
                                 className={`score-status ${tone(result.score)}`}
                               >
                                 {result.score >= 90
@@ -856,6 +885,11 @@ function Dashboard() {
                               <div className="category-score">
                                 {result.scores[category]}
                                 <span>/ 100</span>
+                                <span
+                                  className={`grade-badge small ${tone(result.scores[category])}`}
+                                >
+                                  {letterGrade(result.scores[category])}
+                                </span>
                               </div>
                               <div className="score-track">
                                 <span
@@ -908,13 +942,27 @@ function Dashboard() {
                           <ArrowRight size={13} />
                           REDIRECTS <strong>{result.redirects}</strong>
                         </span>
-                        <button
-                          className="export-button"
-                          onClick={() => void exportScan(scan.id)}
-                        >
-                          <ArrowDownToLine size={13} />
-                          Export JSON
-                        </button>
+                        <div className="report-actions">
+                          <button
+                            className="export-button"
+                            onClick={() => void submit(undefined, scan.url)}
+                            disabled={submitting}
+                          >
+                            <RotateCw size={13} />
+                            Scan again
+                          </button>
+                          <button className="export-button" onClick={downloadPdf}>
+                            <Printer size={13} />
+                            Download PDF
+                          </button>
+                          <button
+                            className="export-button"
+                            onClick={() => void exportScan(scan.id)}
+                          >
+                            <ArrowDownToLine size={13} />
+                            Export JSON
+                          </button>
+                        </div>
                       </div>
                       {result.crawl && (
                         <section className="audit-summary">
@@ -1400,7 +1448,9 @@ function Dashboard() {
                       </div>
                     )}
                   </div>
-                  <div className="history-table">
+                  <div
+                    className={`history-table ${view === "history" ? "deletable" : ""}`}
+                  >
                     <div className="history-head">
                       <span>TARGET WEBSITE</span>
                       <span>SCANNED AT</span>
@@ -1416,9 +1466,9 @@ function Dashboard() {
                       )
                       .slice(0, view === "history" ? 100 : 4)
                       .map((item) => (
+                        <div className="history-item" key={item.id}>
                         <button
                           className={`history-row ${selected === item.id ? "current" : ""}`}
-                          key={item.id}
                           onClick={() => selectScan(item)}
                         >
                           <span className="history-target">
@@ -1437,7 +1487,12 @@ function Dashboard() {
                             className={`history-score ${item.result ? tone(item.result.score) : "muted"}`}
                           >
                             {item.result?.score ?? "—"}
-                            <small>/ 100</small>
+                            <small>
+                              / 100
+                              {item.result
+                                ? ` · ${letterGrade(item.result.score)}`
+                                : ""}
+                            </small>
                           </span>
                           <span className={`history-status ${item.status}`}>
                             <span />
@@ -1445,6 +1500,19 @@ function Dashboard() {
                           </span>
                           <ArrowUpRight size={15} />
                         </button>
+                        {view === "history" &&
+                          item.status !== "queued" &&
+                          item.status !== "running" && (
+                            <button
+                              className="history-delete"
+                              onClick={() => void deleteScan(item)}
+                              aria-label={`Delete scan of ${hostname(item.url)}`}
+                              title="Delete scan"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
                       ))}
                   </div>
                   {view === "history" &&

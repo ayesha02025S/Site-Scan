@@ -300,6 +300,19 @@ def export_scan(scan_id: str, owner_id: str = Depends(require_user)):
         )
 
 
+@app.delete("/scans/{scan_id}")
+def delete_scan(scan_id: str, owner_id: str = Depends(require_user)):
+    with Session.begin() as db:
+        scan = db.get(Scan, scan_id)
+        if scan is None or scan.owner_id != owner_id:
+            raise HTTPException(404, "Scan not found.")
+        # A running scan still writes its result to this row, so wait for it to finish.
+        if scan.status in ("queued", "running"):
+            raise HTTPException(409, "This scan is still running. Delete it after it finishes.")
+        db.delete(scan)
+    return {"deleted": True}
+
+
 def active_monitor_scan(db, monitor_id):
     return db.scalar(select(Scan.id).where(
         Scan.monitor_id == monitor_id,

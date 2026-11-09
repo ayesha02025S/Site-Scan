@@ -3760,3 +3760,106 @@ footer {
 :root[data-theme="confetti"] .history *    {
   color: #111111 !important;
 }
+
+/* Letter grade badges */
+.grade-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  margin-right: 10px;
+  border: 1px solid currentColor;
+  font: 500 14px var(--mono);
+  vertical-align: middle;
+}
+.category-score > .grade-badge.small {
+  min-width: 18px;
+  height: 18px;
+  margin: 0 0 0 10px;
+  font-size: 10px;
+  vertical-align: 6px;
+}
+
+/* Scan again / Download PDF / Export JSON */
+.report-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.report-actions .export-button {
+  cursor: pointer;
+  font: 9px var(--sans);
+}
+.report-actions .export-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (max-width: 800px) {
+  .report-actions {
+    margin-left: 0;
+  }
+}
+
+/* Delete button on History rows */
+.history-item {
+  position: relative;
+}
+.history-item:not(:last-child) > .history-row {
+  border-bottom: 1px solid var(--border);
+}
+.history-table.deletable .history-head,
+.history-table.deletable .history-row {
+  padding-right: 52px;
+}
+.history-delete {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.history-delete:hover,
+.history-delete:focus-visible {
+  color: var(--red);
+  border-color: var(--border);
+}
+
+/* Download PDF: print only the report, in the current theme's colors */
+@media print {
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sidebar,
+  .page-heading,
+  .error-banner,
+  .scan-panel,
+  .history,
+  .report-actions,
+  .explain-button,
+  .issues-toggle,
+  .filters,
+  footer {
+    display: none !important;
+  }
+  .app-shell {
+    display: block;
+  }
+  .main-shell {
+    width: 100%;
+    margin-left: 0;
+  }
+  .panel,
+  .finding-row,
+  .ai-panel {
+    break-inside: avoid;
+  }
+}

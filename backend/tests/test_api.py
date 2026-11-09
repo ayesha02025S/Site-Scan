@@ -83,6 +83,32 @@ def test_restart_marks_interrupted_scan_failed(client):
         assert "restarted" in result["error"]
 
 
+def test_delete_scan(client, monkeypatch):
+    async def fake_scan(url):
+        return {"score": 70, "checks": []}
+
+    monkeypatch.setattr(main, "scan_website", fake_scan)
+    scan = client.post("/scans", json={"url": "https://example.com"}).json()
+    wait_for_scan(client, scan["id"])
+    assert client.delete("/scans/" + scan["id"]).json() == {"deleted": True}
+    assert client.get("/scans/" + scan["id"]).status_code == 404
+    assert client.get("/scans").json() == []
+    assert client.delete("/scans/" + scan["id"]).status_code == 404
+
+
+def test_cannot_delete_running_or_other_users_scan(client):
+    with main.Session.begin() as db:
+        running = Scan(owner_id="user_test", url="https://example.com", status="running")
+        other = Scan(owner_id="user_other", url="https://example.com", status="completed")
+        db.add_all([running, other])
+        db.flush()
+        running_id, other_id = running.id, other.id
+    assert client.delete("/scans/" + running_id).status_code == 409
+    assert client.delete("/scans/" + other_id).status_code == 404
+    with main.Session() as db:
+        assert db.get(Scan, other_id) is not None
+
+
 def test_report_export_matches_saved_result(client, monkeypatch):
     async def fake_scan(url):
         return {"score": 90, "checks": []}
