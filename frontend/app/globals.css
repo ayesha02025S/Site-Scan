@@ -3847,6 +3847,10 @@ footer {
   .explain-button,
   .issues-toggle,
   .filters,
+  .trend-details,
+  .trend-empty,
+  .findings-foot button,
+  .comparison .section-heading button,
   footer {
     display: none !important;
   }
@@ -3857,9 +3861,24 @@ footer {
     width: 100%;
     margin-left: 0;
   }
-  .panel,
+  .main-shell main {
+    max-width: none;
+    padding: 0;
+  }
+  .trend-legend button {
+    border: 0;
+    padding: 0;
+    background: transparent;
+  }
+  .trend-legend button[aria-pressed="false"] {
+    display: none;
+  }
+  .trend-chart {
+    max-height: 150px;
+  }
+  .category-card,
   .finding-row,
-  .ai-panel {
+  .trend-chart {
     break-inside: avoid;
   }
 }

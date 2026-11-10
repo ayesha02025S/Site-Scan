@@ -312,14 +312,15 @@ function Dashboard() {
     else setError("That report is no longer in your latest 100 scans.");
   }
   async function deleteScan(item: Scan) {
-    if (!window.confirm(`Delete the scan of ${hostname(item.url)}? This cannot be undone.`))
+    if (!window.confirm(`Delete the scan of ${hostname(item.url)} and its alerts? This cannot be undone.`))
       return;
     revision.current += 1;
     try {
       await request(`/scans/${item.id}`, { method: "DELETE" });
-      const remaining = scans.filter((candidate) => candidate.id !== item.id);
-      setScans(remaining);
-      if (selected === item.id) setSelected(remaining[0]?.id || null);
+      revision.current += 1;
+      setScans((items) => items.filter((candidate) => candidate.id !== item.id));
+      setNotifications((items) => items.filter((alert) => alert.scan_id !== item.id));
+      setSelected((current) => (current === item.id ? null : current));
     } catch (exc) {
       setError((exc as Error).message);
     }

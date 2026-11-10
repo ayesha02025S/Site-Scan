@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from database import (
     Base,
@@ -187,8 +187,8 @@ async def finish_monitor_run(monitor_id, scan_id, scheduled=True):
     alerts = []
     with Session.begin() as db:
         monitor = db.get(Monitor, monitor_id)
-        scan = db.get(Scan, scan_id)
-        if monitor is None:
+        scan = db.get(Scan, scan_id, with_for_update=True)
+        if monitor is None or scan is None:
             return
         email = monitor.email
         if scan.status == "failed":
@@ -281,8 +281,13 @@ async def explain(scan_id: str, owner_id: str = Depends(require_user)):
     explanation = await explain_scan(result)
     if explanation["source"] == "ai":
         with Session.begin() as db:
-            scan = db.get(Scan, scan_id)
-            scan.result = {**scan.result, "explanation": explanation}
+            saved = db.execute(
+                update(Scan)
+                .where(Scan.id == scan_id, Scan.owner_id == owner_id)
+                .values(result={**result, "explanation": explanation})
+            )
+            if saved.rowcount == 0:
+                raise HTTPException(404, "Scan not found.")
     return explanation
 
 
@@ -301,14 +306,19 @@ def export_scan(scan_id: str, owner_id: str = Depends(require_user)):
 
 
 @app.delete("/scans/{scan_id}")
-def delete_scan(scan_id: str, owner_id: str = Depends(require_user)):
+async def delete_scan(scan_id: str, owner_id: str = Depends(require_user)):
     with Session.begin() as db:
-        scan = db.get(Scan, scan_id)
+        scan = db.get(Scan, scan_id, with_for_update=True)
         if scan is None or scan.owner_id != owner_id:
             raise HTTPException(404, "Scan not found.")
         # A running scan still writes its result to this row, so wait for it to finish.
         if scan.status in ("queued", "running"):
             raise HTTPException(409, "This scan is still running. Delete it after it finishes.")
+        db.execute(
+            delete(Notification).where(
+                Notification.scan_id == scan.id, Notification.owner_id == owner_id
+            )
+        )
         db.delete(scan)
     return {"deleted": True}
 

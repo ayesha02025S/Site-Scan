@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 import pytest
@@ -6,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import main
-from database import Base, Scan
+from database import Base, Notification, Scan
 from scanner import ScanError
 
 
@@ -94,6 +95,49 @@ def test_delete_scan(client, monkeypatch):
     assert client.get("/scans/" + scan["id"]).status_code == 404
     assert client.get("/scans").json() == []
     assert client.delete("/scans/" + scan["id"]).status_code == 404
+
+
+def test_delete_scan_removes_only_its_alerts(client):
+    with main.Session.begin() as db:
+        removed = Scan(owner_id="user_test", url="https://example.com/", status="completed")
+        kept = Scan(owner_id="user_test", url="https://example.com/", status="completed")
+        db.add_all([removed, kept])
+        db.flush()
+        removed_id, kept_id = removed.id, kept.id
+        for scan in (removed, kept):
+            db.add(Notification(
+                owner_id=scan.owner_id,
+                url=scan.url,
+                scan_id=scan.id,
+                kind="new_issues",
+                title="New issue",
+                body="Report available.",
+            ))
+    assert client.delete(f"/scans/{removed_id}").status_code == 200
+    assert [alert["scan_id"] for alert in client.get("/notifications").json()] == [kept_id]
+
+
+def test_deleting_scan_during_explanation_returns_not_found(client, monkeypatch):
+    with main.Session.begin() as db:
+        scan = Scan(
+            owner_id="user_test",
+            url="https://example.com/",
+            status="completed",
+            result={"score": 70, "checks": []},
+        )
+        db.add(scan)
+        db.flush()
+        scan_id = scan.id
+
+    async def fake_explanation(result):
+        deleted = await asyncio.to_thread(client.delete, f"/scans/{scan_id}")
+        assert deleted.status_code == 200
+        return {"source": "ai"}
+
+    monkeypatch.setattr(main, "explain_scan", fake_explanation)
+    response = client.post(f"/scans/{scan_id}/explain")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Scan not found."}
 
 
 def test_cannot_delete_running_or_other_users_scan(client):
