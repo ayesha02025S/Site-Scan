@@ -69,6 +69,7 @@ export default function VisualIssues({
   }, [getToken, scanId, pageIndex, hasScreenshot]);
 
   const highlights = visual?.highlights || [];
+  const unavailableReasons = [...new Set(pages.map((item) => item.visual_audit?.message || (item.rendered_accessibility?.status !== "completed" ? item.rendered_accessibility?.message : undefined)).filter(Boolean))];
   const highlight = selected === null ? undefined : highlights[selected];
   const check =
     highlight &&
@@ -91,10 +92,13 @@ export default function VisualIssues({
         <span className="tag">PAGE SNAPSHOT</span>
       </div>
       <p className="visual-note">
-        A 1280 × 900 viewport captured during this scan. Select a numbered
-        marker to inspect an affected element. Issues below the captured area
+        When available, a 1280 × 900 viewport captured during this scan. Select a numbered
+        marker to inspect a confirmed axe-core issue. Markers cover visible elements only. Issues below the captured area
         and elements without a visible rectangle remain in Assessment findings.
       </p>
+      {result.rendered_accessibility?.status !== "completed" && result.rendered_accessibility && (
+        <p className="visual-note" role="status">Browser audit incomplete. Missing markers do not establish that the page has no accessibility issues.</p>
+      )}
       {available.length > 0 ? (
         <>
           <label className="visual-page-label">
@@ -183,7 +187,7 @@ export default function VisualIssues({
         <p className="visual-note">
           This report has no screenshot. Run another assessment to capture one.
           Screenshots may be unavailable if the page or browser audit could not
-          finish.
+          finish. {unavailableReasons.slice(0, 3).join(" ")}
         </p>
       )}
     </section>

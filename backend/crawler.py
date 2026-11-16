@@ -134,7 +134,7 @@ async def scan_website(url):
         "checks": checks,
         "scores": scores,
         "score": score,
-        "scanner_version": "3.2",
+        "scanner_version": "3.3",
         "scoring_version": "3.0",
         "pages": pages,
         "crawl": {

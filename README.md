@@ -215,3 +215,7 @@ Monitor scans now retain their monitor ID. Comparisons use the previous successf
 ### Visual accessibility findings
 
 New scans capture a bounded JPEG of each audited page’s 1280 × 900 browser viewport. In **See accessibility issues**, choose a page and select a numbered marker or element in the list to see its accessibility rule and suggested fix. The screenshot shows up to 60 visible violation markers. Findings below the viewport, hidden elements, and incomplete checks remain available in Assessment findings. Older reports need a new assessment to capture images. Screenshots are restricted to the report owner and loaded separately from report metadata.
+
+### Partial browser audits
+
+Browser navigation waits for the HTML to be ready, then allows up to four seconds for remaining resources. Slow images and third-party requests no longer discard usable rendered findings. Incomplete loads remain partial, and the dashboard labels evaluated-check scores as partial instead of assigning a reassuring letter grade. A 100 on evaluated checks does not establish that unaudited checks pass. Screenshot markers are measured before and after capture; moving layouts are omitted rather than returning misplaced markers. Scanner version 3.3 starts a new comparison baseline.

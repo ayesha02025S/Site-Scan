@@ -208,8 +208,7 @@ async def capture_visual(page, raw):
                 if violation["id"] in RULES
                 for node in violation.get("nodes", [])[:20]
             ][:60]
-            highlights = await page.evaluate(
-                """(targets) => {
+            measure = """(targets) => {
                     document.getAnimations().forEach(animation => animation.pause());
                     return targets.flatMap(({rule_id, target}) => {
                         try {
@@ -234,10 +233,12 @@ async def capture_visual(page, raw):
                                 x, y, width: right - x, height: bottom - y}];
                         } catch { return []; }
                     });
-                }""",
-                targets,
-            )
+                }"""
+            highlights = await page.evaluate(measure, targets)
             screenshot = await page.screenshot(type="jpeg", quality=45, full_page=False, timeout=3000)
+            after = await page.evaluate(measure, targets)
+            if highlights != after:
+                return {"status": "unavailable", "message": "The page layout moved during capture. A screenshot was omitted to avoid misplaced issue markers; try scanning again."}
             if len(screenshot) > 200000:
                 return {"status": "unavailable", "message": "The screenshot exceeded the image size limit."}
             return {
@@ -255,7 +256,7 @@ async def audit_page(url):
     try:
         validate_url(url)
         source = AXE_PATH.read_text()
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, TimeoutError as BrowserTimeout
     except (OSError, ImportError):
         return unavailable(
             "Browser audit is not installed. Run npm ci in backend, then python -m playwright install chromium with the documented browser path."
@@ -312,18 +313,37 @@ async def audit_page(url):
                                 lambda error: script_errors.append(str(error)),
                             )
                             response = await page.goto(
-                                url, wait_until="load", timeout=18000
+                                url, wait_until="domcontentloaded", timeout=18000
                             )
                             if response is None or response.status >= 400:
                                 return unavailable(
                                     "The rendered page did not load successfully. Static checks are still available."
                                 )
+                            load_incomplete = False
+                            try:
+                                await page.wait_for_load_state("load", timeout=4000)
+                            except BrowserTimeout:
+                                load_incomplete = True
                             await page.wait_for_timeout(600)
+                            try:
+                                await page.wait_for_function(
+                                    r"""() => {
+                                        const text = (document.body?.innerText || '').trim();
+                                        return !!text && !(text.length < 160 && /^(loading\b|please wait\b)/i.test(text));
+                                    }""",
+                                    timeout=5000,
+                                )
+                            except BrowserTimeout:
+                                return {
+                                    **unavailable("The page remained empty or showed a loading screen. Its accessibility could not be verified."),
+                                    "visual_audit": await capture_visual(page, {}),
+                                }
                             raw = await run_axe(page, source)
                             visual = await capture_visual(page, raw)
                             frames = await page.locator("iframe").count()
                             partial = (
                                 resources.blocked > 0
+                                or load_incomplete
                                 or bool(script_errors)
                                 or frames > 0
                             )
@@ -341,10 +361,15 @@ async def audit_page(url):
                                 "visual_audit": visual,
                                 "blocked_resources": resources.blocked,
                                 "script_errors": len(script_errors),
+                                "load_incomplete": load_incomplete,
                                 "checks": convert_results(raw, partial),
                             }
                     finally:
                         await browser.close()
+    except BrowserTimeout:
+        return unavailable(
+            "The page HTML did not become ready before the navigation timeout. Static checks are preserved, but rendered accessibility is unverified."
+        )
     except TimeoutError:
         return unavailable(
             "The browser audit timed out. Static checks are preserved; try scanning again."

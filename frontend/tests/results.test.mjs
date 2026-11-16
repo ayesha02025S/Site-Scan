@@ -132,3 +132,16 @@ test("scores map to letter grades", () => {
     ["A", "A", "B", "B", "C", "C", "D", "D", "F", "F"],
   );
 });
+
+test("perfect evaluated scores are flagged when browser coverage is incomplete", async () => {
+  const { incompleteScore } = await import("../lib/results.ts");
+  const partial = result([
+    { ...check("title", "passed"), category: "accessibility" },
+    { ...check("contrast", "inconclusive"), category: "accessibility" },
+  ], {score: 100, rendered_accessibility: {status: "unavailable"}});
+  assert.equal(incompleteScore(partial), true);
+  assert.equal(incompleteScore(partial, "accessibility"), true);
+  assert.equal(incompleteScore(partial, "security"), false);
+  assert.equal(incompleteScore(result([check("title", "passed")])), false);
+  assert.equal(incompleteScore(result([], {crawl: {status: "partial"}})), true);
+});

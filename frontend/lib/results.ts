@@ -31,6 +31,7 @@ export type Explanation = {
 };
 export type VisualAudit = {
   status: string;
+  message?: string;
   has_screenshot?: boolean;
   width: number;
   height: number;
@@ -53,6 +54,7 @@ export type Result = {
     title?: string;
     score?: number;
     error?: string;
+    rendered_accessibility?: { status: string; message: string };
   }[];
   crawl?: {
     limit: number;
@@ -210,4 +212,16 @@ export function letterGrade(score: number) {
   if (score >= 70) return "C";
   if (score >= 60) return "D";
   return "F";
+}
+
+export function incompleteScore(result: Result, category?: Category) {
+  return (
+    result.checks.some(
+      (check) => (!category || check.category === category) && check.status === "inconclusive",
+    ) ||
+    ((!category || category === "accessibility") &&
+      !!result.rendered_accessibility &&
+      result.rendered_accessibility.status !== "completed") ||
+    (!category && !!result.crawl && result.crawl.status !== "completed")
+  );
 }

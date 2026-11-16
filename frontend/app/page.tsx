@@ -39,6 +39,7 @@ import {
   type Scan,
   compareResults,
   letterGrade,
+  incompleteScore,
   previousScan,
   resultClass,
   resultLabel,
@@ -649,7 +650,7 @@ function Dashboard() {
                 Within each category, passed checks earn their severity weight:
                 high = 3, medium = 2, low = 1. The category score is the
                 percentage of evaluated weight earned. Inconclusive and
-                not-applicable checks are excluded from the score. The overall
+                not-applicable checks are excluded from the score. Partial assessments are marked beside the scores; even 100 only describes evaluated checks. The overall
                 score is the rounded mean of the three category scores. Scores
                 of 90–100 are labeled “Strong,” 60–89 “Needs attention,” and
                 0–59 “Action required.” These are project heuristics, not an
@@ -804,6 +805,12 @@ function Dashboard() {
                           {dateLabel(scan.created_at)}
                         </span>
                       </div>
+                      {incompleteScore(result) && (
+                        <section className="audit-summary panel score-warning" role="status">
+                          <strong>Partial assessment — scores cover evaluated checks only</strong>
+                          <p>Some checks or pages could not be fully audited. A score of 100 means the evaluated checks passed; it does not mean this website is issue-free. Review the incomplete checks below.</p>
+                        </section>
+                      )}
                       <section
                         className="score-grid"
                         aria-label="Assessment scores"
@@ -824,7 +831,7 @@ function Dashboard() {
                             >
                               <div>
                                 <strong>{result.score}</strong>
-                                <span>OUT OF 100</span>
+                                <span>{incompleteScore(result) ? "EVALUATED CHECKS" : "OUT OF 100"}</span>
                               </div>
                             </div>
                             <div>
@@ -832,12 +839,14 @@ function Dashboard() {
                                 className={`grade-badge ${tone(result.score)}`}
                                 title="Letter grade: A 90+, B 80+, C 70+, D 60+, F below 60"
                               >
-                                {letterGrade(result.score)}
+                                {incompleteScore(result) ? "PARTIAL" : letterGrade(result.score)}
                               </span>
                               <span
                                 className={`score-status ${tone(result.score)}`}
                               >
-                                {result.score >= 90
+                                {incompleteScore(result)
+                                  ? "Incomplete assessment"
+                                  : result.score >= 90
                                   ? "Strong"
                                   : result.score >= 60
                                     ? "Needs attention"
@@ -886,11 +895,11 @@ function Dashboard() {
                               <h3>{category}</h3>
                               <div className="category-score">
                                 {result.scores[category]}
-                                <span>/ 100</span>
+                                <span>{incompleteScore(result, category) ? "/ 100 evaluated" : "/ 100"}</span>
                                 <span
                                   className={`grade-badge small ${tone(result.scores[category])}`}
                                 >
-                                  {letterGrade(result.scores[category])}
+                                  {incompleteScore(result, category) ? "PARTIAL" : letterGrade(result.scores[category])}
                                 </span>
                               </div>
                               <div className="score-track">
@@ -1493,7 +1502,7 @@ function Dashboard() {
                             <small>
                               / 100
                               {item.result
-                                ? ` · ${letterGrade(item.result.score)}`
+                                ? ` · ${incompleteScore(item.result) ? "Partial" : letterGrade(item.result.score)}`
                                 : ""}
                             </small>
                           </span>

@@ -3980,3 +3980,6 @@ footer {
     display: none !important;
   }
 }
+
+.score-warning { border-left: 3px solid #d8ae68; }
+.score-warning strong { color: var(--text); }

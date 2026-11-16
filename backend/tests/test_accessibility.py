@@ -86,7 +86,7 @@ def test_real_chromium_detects_rendered_violations_and_fixes(monkeypatch):
     button = next(item for item in visual["highlights"] if item["selector"] == "#dynamic-button")
     assert button["rule_id"] == "axe-button-name"
     assert 0 <= button["x"] < 1280 and 0 <= button["y"] < 900
-    assert button["width"] > 0 and button["height"] > 0
+    assert {key: button[key] for key in ("x", "y", "width", "height")} == {"x": 200, "y": 200, "width": 100, "height": 40}
     checks = {c["id"]: c for c in report["checks"]}
     for rule in [
         "color-contrast",
@@ -157,3 +157,53 @@ def test_visual_capture_failure_is_nonfatal():
 
     result = asyncio.run(capture_visual(BrokenPage(), {}))
     assert result["status"] == "unavailable"
+
+
+@pytest.mark.browser
+def test_slow_image_does_not_discard_rendered_findings(monkeypatch):
+    html = '<!doctype html><html lang="en"><head><title>Slow resource</title></head><body><main><h1>Loaded content</h1><button id="unnamed"></button><img src="/slow.png" alt="Test"></main></body></html>'
+
+    async def fetch_fixture(self, url):
+        if url.endswith('/slow.png'):
+            await asyncio.sleep(8)
+            return 200, {"Content-Type": "image/png"}, b''
+        return 200, {"Content-Type": "text/html"}, html.encode()
+
+    monkeypatch.setattr(SafeResources, "fetch", fetch_fixture)
+    report = asyncio.run(audit_page("https://fixture.example/"))
+    assert report["status"] == "partial", report
+    assert report["load_incomplete"] is True
+    button = next(c for c in report["checks"] if c["id"] == "axe-button-name")
+    assert button["status"] == "failed"
+    assert report["visual_audit"]["status"] == "completed"
+
+
+def test_moving_layout_does_not_return_misplaced_markers():
+    from accessibility import capture_visual
+
+    class MovingPage:
+        calls = 0
+
+        async def evaluate(self, *args):
+            self.calls += 1
+            return [{"x": self.calls * 100}]
+
+        async def screenshot(self, **kwargs):
+            return b"jpeg"
+
+    result = asyncio.run(capture_visual(MovingPage(), {}))
+    assert result["status"] == "unavailable"
+    assert "layout moved" in result["message"]
+    assert "image_base64" not in result
+
+
+@pytest.mark.browser
+def test_loading_screen_does_not_pass_accessibility(monkeypatch):
+    async def fetch_fixture(self, url):
+        return 200, {"Content-Type": "text/html"}, b'<html><body><main>Loading your account...</main></body></html>'
+
+    monkeypatch.setattr(SafeResources, "fetch", fetch_fixture)
+    report = asyncio.run(audit_page("https://fixture.example/"))
+    assert report["status"] == "unavailable"
+    assert "loading screen" in report["message"]
+    assert all(c["status"] == "inconclusive" for c in report["checks"])
