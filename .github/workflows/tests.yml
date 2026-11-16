@@ -22,7 +22,7 @@ jobs:
         working-directory: backend
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/backend/.browsers
-      DATABASE_URL: sqlite:///:memory:
+      DATABASE_URL: "sqlite:///:memory:"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
