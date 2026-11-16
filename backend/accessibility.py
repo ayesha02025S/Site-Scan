@@ -328,21 +328,26 @@ async def audit_page(url):
                             except BrowserTimeout:
                                 load_incomplete = True
                             await page.wait_for_timeout(600)
-                            try:
-                                await page.wait_for_function(
-                                    r"""() => {
-                                        const text = (document.body?.innerText || '').trim();
-                                        return !!text && !(text.length < 160 && /^(loading\b|please wait\b)/i.test(text));
-                                    }""",
-                                    timeout=5000,
-                                )
-                            except BrowserTimeout:
-                                return {
-                                    **unavailable("The page remained empty or showed a loading screen. Its accessibility could not be verified."),
-                                    "visual_audit": await capture_visual(page, {}),
-                                }
                             stage = "initial screenshot capture"
                             snapshot = await capture_visual(page, {})
+                            stage = "page readiness"
+                            ready = False
+                            for _ in range(10):
+                                ready = await page.evaluate(
+                                    r"""() => {
+                                        const text = (document.body?.innerText || '').trim();
+                                        const loading = text.length < 160 && /^(loading\b|please wait\b)/i.test(text);
+                                        return !loading && (!!text || !!document.querySelector('main img, main canvas, main svg, body > img'));
+                                    }"""
+                                )
+                                if ready:
+                                    break
+                                await asyncio.sleep(0.5)
+                            if not ready:
+                                return {
+                                    **unavailable("The page remained empty or showed a loading screen. Its accessibility could not be verified."),
+                                    "visual_audit": snapshot,
+                                }
                             stage = "accessibility checks"
                             raw = await run_axe(page, source)
                             stage = "issue marker capture"
