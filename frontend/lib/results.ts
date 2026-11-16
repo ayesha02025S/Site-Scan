@@ -2,6 +2,7 @@ export type Category = "performance" | "accessibility" | "security";
 export type CheckResult = {
   id: string;
   page_url?: string;
+  rule_id?: string;
   category: Category;
   title: string;
   status: "passed" | "failed" | "inconclusive" | "not_applicable";
@@ -28,10 +29,26 @@ export type Explanation = {
     how: string;
   }[];
 };
+export type VisualAudit = {
+  status: string;
+  has_screenshot?: boolean;
+  width: number;
+  height: number;
+  highlights: {
+    rule_id: string;
+    selector: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }[];
+};
+
 export type Result = {
   pages?: {
     url: string;
     final_url?: string;
+    visual_audit?: VisualAudit | null;
     status: string;
     title?: string;
     score?: number;

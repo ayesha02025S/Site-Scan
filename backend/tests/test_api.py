@@ -199,3 +199,31 @@ def test_multi_page_report_is_saved_and_exported(client, monkeypatch):
     assert len(saved["result"]["checks"]) == 2
     exported = client.get(f'/scans/{created["id"]}/export').json()
     assert exported["result"]["pages"] == saved["result"]["pages"]
+
+
+def test_screenshots_are_private_and_excluded_from_report_metadata(client):
+    import base64
+
+    image = b"\xff\xd8fixture"
+    visual = {"status": "completed", "width": 1280, "height": 900,
+              "highlights": [], "image_base64": base64.b64encode(image).decode()}
+    with main.Session.begin() as db:
+        mine = Scan(owner_id="user_test", url="https://example.com/", status="completed",
+                    result={"pages": [{"url": "https://example.com/", "visual_audit": visual}]})
+        other = Scan(owner_id="user_other", url="https://example.com/", status="completed",
+                     result={"pages": [{"url": "https://example.com/", "visual_audit": visual}]})
+        old = Scan(owner_id="user_test", url="https://example.com/", status="completed", result={"score": 80})
+        db.add_all([mine, other, old])
+        db.flush()
+        mine_id, other_id, old_id = mine.id, other.id, old.id
+    for path in [f"/scans/{mine_id}", f"/scans/{mine_id}/export"]:
+        metadata = client.get(path).json()["result"]["pages"][0]["visual_audit"]
+        assert metadata["has_screenshot"] is True
+        assert "image_base64" not in metadata
+    assert "image_base64" not in str(client.get("/scans").json())
+    response = client.get(f"/scans/{mine_id}/pages/0/screenshot")
+    assert response.content == image
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "private, no-store"
+    for scan_id, index in [(other_id, 0), (old_id, 0), (mine_id, -1), (mine_id, 1)]:
+        assert client.get(f"/scans/{scan_id}/pages/{index}/screenshot").status_code == 404

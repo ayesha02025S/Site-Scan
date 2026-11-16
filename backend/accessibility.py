@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import os
 from pathlib import Path
@@ -198,6 +199,58 @@ async def run_axe(page, source):
     )
 
 
+async def capture_visual(page, raw):
+    try:
+        async with asyncio.timeout(5):
+            targets = [
+                {"rule_id": "axe-" + violation["id"], "target": node.get("target", [])}
+                for violation in raw.get("violations", [])
+                if violation["id"] in RULES
+                for node in violation.get("nodes", [])[:20]
+            ][:60]
+            highlights = await page.evaluate(
+                """(targets) => {
+                    document.getAnimations().forEach(animation => animation.pause());
+                    return targets.flatMap(({rule_id, target}) => {
+                        try {
+                            if (!target.length || target.some(part => typeof part !== 'string')) return [];
+                            let root = document;
+                            let element;
+                            for (let index = 0; index < target.length; index++) {
+                                element = root.querySelector(target[index]);
+                                if (!element) return [];
+                                if (index < target.length - 1) {
+                                    root = element.shadowRoot;
+                                    if (!root) return [];
+                                }
+                            }
+                            const rect = element.getBoundingClientRect();
+                            const x = Math.max(0, rect.left);
+                            const y = Math.max(0, rect.top);
+                            const right = Math.min(innerWidth, rect.right);
+                            const bottom = Math.min(innerHeight, rect.bottom);
+                            if (right <= x || bottom <= y) return [];
+                            return [{rule_id, selector: target.join(' → ').slice(0, 1000),
+                                x, y, width: right - x, height: bottom - y}];
+                        } catch { return []; }
+                    });
+                }""",
+                targets,
+            )
+            screenshot = await page.screenshot(type="jpeg", quality=45, full_page=False, timeout=3000)
+            if len(screenshot) > 200000:
+                return {"status": "unavailable", "message": "The screenshot exceeded the image size limit."}
+            return {
+                "status": "completed",
+                "width": 1280,
+                "height": 900,
+                "image_base64": base64.b64encode(screenshot).decode("ascii"),
+                "highlights": highlights,
+            }
+    except Exception:
+        return {"status": "unavailable", "message": "A screenshot could not be captured; accessibility findings are still available."}
+
+
 async def audit_page(url):
     try:
         validate_url(url)
@@ -267,6 +320,7 @@ async def audit_page(url):
                                 )
                             await page.wait_for_timeout(600)
                             raw = await run_axe(page, source)
+                            visual = await capture_visual(page, raw)
                             frames = await page.locator("iframe").count()
                             partial = (
                                 resources.blocked > 0
@@ -284,6 +338,7 @@ async def audit_page(url):
                                 "engine_version": raw.get("testEngine", {}).get(
                                     "version"
                                 ),
+                                "visual_audit": visual,
                                 "blocked_resources": resources.blocked,
                                 "script_errors": len(script_errors),
                                 "checks": convert_results(raw, partial),

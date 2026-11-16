@@ -211,3 +211,7 @@ Run backend tests with `cd backend && .venv/bin/python -m pytest -q`. Authentica
 Select **Scan now** beside a monitored website to queue an assessment immediately, including for paused monitors. This keeps the existing schedule and pause state. Queued and running monitor scans disable the button; the API also rejects duplicate runs and enforces its queue limit. Results appear in Scan history, and monitor runs use the same regression, failure, and recovery alerts as scheduled assessments.
 
 Monitor scans now retain their monitor ID. Comparisons use the previous successful run of that monitor, so ordinary manual assessments cannot suppress alerts. Existing reports remain saved; each existing monitor establishes a fresh baseline with its first run after this update. Scanner version 3.2 also keeps finding IDs stable across tracking parameters and trailing slashes, and redirect aliases no longer consume the page limit.
+
+### Visual accessibility findings
+
+New scans capture a bounded JPEG of each audited page’s 1280 × 900 browser viewport. In **See accessibility issues**, choose a page and select a numbered marker or element in the list to see its accessibility rule and suggested fix. The screenshot shows up to 60 visible violation markers. Findings below the viewport, hidden elements, and incomplete checks remain available in Assessment findings. Older reports need a new assessment to capture images. Screenshots are restricted to the report owner and loaded separately from report metadata.

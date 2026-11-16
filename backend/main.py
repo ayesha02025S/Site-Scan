@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -7,7 +9,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select, update
 
@@ -303,6 +305,25 @@ def export_scan(scan_id: str, owner_id: str = Depends(require_user)):
                 "Content-Disposition": f'attachment; filename="site-scan-{scan.id}.json"'
             },
         )
+
+
+@app.get("/scans/{scan_id}/pages/{page_index}/screenshot")
+def page_screenshot(scan_id: str, page_index: int, owner_id: str = Depends(require_user)):
+    with Session() as db:
+        scan = db.get(Scan, scan_id)
+        if scan is None or scan.owner_id != owner_id:
+            raise HTTPException(404, "Screenshot not found.")
+        pages = (scan.result or {}).get("pages", [])
+        if page_index < 0 or page_index >= len(pages):
+            raise HTTPException(404, "Screenshot not found.")
+        encoded = (pages[page_index].get("visual_audit") or {}).get("image_base64")
+        if not encoded:
+            raise HTTPException(404, "This report has no screenshot. Run another assessment to capture one.")
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            raise HTTPException(404, "Screenshot not found.") from None
+        return Response(data, media_type="image/jpeg", headers={"X-Content-Type-Options": "nosniff"})
 
 
 @app.delete("/scans/{scan_id}")

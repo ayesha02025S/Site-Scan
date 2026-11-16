@@ -47,6 +47,7 @@ import {
 import { useAuth, UserButton } from "@clerk/nextjs";
 import AccountGate from "../components/AccountGate";
 import HealthTrends from "../components/HealthTrends";
+import VisualIssues from "../components/VisualIssues";
 import Monitoring from "../components/Monitoring";
 import AppearanceSettings from "../components/AppearanceSettings";
 import AdjustmentsSettings from "../components/AdjustmentsSettings";
@@ -1195,6 +1196,7 @@ function Dashboard() {
                           )}
                         </section>
                       )}
+                      <VisualIssues key={scan.id} scanId={scan.id} result={result} />
                       <section className="findings panel">
                         <div className="section-heading">
                           <span className="section-number">01</span>

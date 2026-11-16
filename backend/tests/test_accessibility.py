@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,14 @@ def test_real_chromium_detects_rendered_violations_and_fixes(monkeypatch):
     monkeypatch.setattr(SafeResources, "fetch", fetch_fixture)
     report = asyncio.run(audit_page("https://fixture.example/"))
     assert report["status"] in ("completed", "partial"), report["message"]
+    visual = report["visual_audit"]
+    assert visual["status"] == "completed"
+    image = base64.b64decode(visual["image_base64"])
+    assert image.startswith(b"\xff\xd8") and len(image) <= 200000
+    button = next(item for item in visual["highlights"] if item["selector"] == "#dynamic-button")
+    assert button["rule_id"] == "axe-button-name"
+    assert 0 <= button["x"] < 1280 and 0 <= button["y"] < 900
+    assert button["width"] > 0 and button["height"] > 0
     checks = {c["id"]: c for c in report["checks"]}
     for rule in [
         "color-contrast",
@@ -137,3 +146,14 @@ def test_redirect_to_private_resource_is_blocked():
 
     asyncio.run(run())
     assert client.calls == ["https://example.com/"]
+
+
+def test_visual_capture_failure_is_nonfatal():
+    from accessibility import capture_visual
+
+    class BrokenPage:
+        async def evaluate(self, *args):
+            raise RuntimeError("Screenshot unavailable")
+
+    result = asyncio.run(capture_visual(BrokenPage(), {}))
+    assert result["status"] == "unavailable"

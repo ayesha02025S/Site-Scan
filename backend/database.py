@@ -98,13 +98,29 @@ def iso_utc(value):
     return value.isoformat()
 
 
+def result_metadata(result):
+    if not result or "pages" not in result:
+        return result
+    pages = []
+    for page in result["pages"]:
+        visual = page.get("visual_audit")
+        if visual:
+            visual = {
+                **{key: value for key, value in visual.items() if key != "image_base64"},
+                "has_screenshot": bool(visual.get("image_base64")),
+            }
+            page = {**page, "visual_audit": visual}
+        pages.append(page)
+    return {**result, "pages": pages}
+
+
 def serialize(scan):
     return {
         "id": scan.id,
         "url": scan.url,
         "status": scan.status,
         "created_at": iso_utc(scan.created_at),
-        "result": scan.result,
+        "result": result_metadata(scan.result),
         "error": scan.error,
     }
 

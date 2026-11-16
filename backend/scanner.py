@@ -505,6 +505,7 @@ async def scan_page(url, allowed_origin=None, link_cache=None):
     from accessibility import audit_page
 
     rendered = await audit_page(result["final_url"])
+    result["visual_audit"] = rendered.pop("visual_audit", None)
     result["rendered_accessibility"] = {
         key: value for key, value in rendered.items() if key != "checks"
     }

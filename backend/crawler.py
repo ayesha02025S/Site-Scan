@@ -119,6 +119,7 @@ async def scan_website(url):
                 "score": page["score"],
                 "scores": page["scores"],
                 "rendered_accessibility": page.get("rendered_accessibility"),
+                "visual_audit": page.get("visual_audit"),
             }
         )
     scores, score = score_checks(checks)
@@ -129,7 +130,7 @@ async def scan_website(url):
         if p["status"] == "completed"
     )
     return {
-        **root,
+        **{key: value for key, value in root.items() if key != "visual_audit"},
         "checks": checks,
         "scores": scores,
         "score": score,
