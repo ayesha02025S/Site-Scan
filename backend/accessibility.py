@@ -201,7 +201,7 @@ async def run_axe(page, source):
 
 async def capture_visual(page, raw):
     try:
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(10):
             targets = [
                 {"rule_id": "axe-" + violation["id"], "target": node.get("target", [])}
                 for violation in raw.get("violations", [])
@@ -235,7 +235,7 @@ async def capture_visual(page, raw):
                     });
                 }"""
             highlights = await page.evaluate(measure, targets)
-            screenshot = await page.screenshot(type="jpeg", quality=45, full_page=False, timeout=3000)
+            screenshot = await page.screenshot(type="jpeg", quality=45, full_page=False, timeout=8000)
             after = await page.evaluate(measure, targets)
             if highlights != after:
                 return {"status": "unavailable", "message": "The page layout moved during capture. A screenshot was omitted to avoid misplaced issue markers; try scanning again."}
@@ -266,8 +266,10 @@ async def audit_page(url):
         writer.close()
         await writer.wait_closed()
 
+    snapshot = None
+    stage = "browser startup"
     try:
-        async with asyncio.timeout(35):
+        async with asyncio.timeout(60):
             async with await asyncio.start_server(
                 deny_connection, "127.0.0.1", 0
             ) as deny_proxy:
@@ -312,6 +314,7 @@ async def audit_page(url):
                                 "pageerror",
                                 lambda error: script_errors.append(str(error)),
                             )
+                            stage = "page loading"
                             response = await page.goto(
                                 url, wait_until="domcontentloaded", timeout=18000
                             )
@@ -338,7 +341,11 @@ async def audit_page(url):
                                     **unavailable("The page remained empty or showed a loading screen. Its accessibility could not be verified."),
                                     "visual_audit": await capture_visual(page, {}),
                                 }
+                            stage = "initial screenshot capture"
+                            snapshot = await capture_visual(page, {})
+                            stage = "accessibility checks"
                             raw = await run_axe(page, source)
+                            stage = "issue marker capture"
                             visual = await capture_visual(page, raw)
                             frames = await page.locator("iframe").count()
                             partial = (
@@ -371,9 +378,13 @@ async def audit_page(url):
             "The page HTML did not become ready before the navigation timeout. Static checks are preserved, but rendered accessibility is unverified."
         )
     except TimeoutError:
-        return unavailable(
-            "The browser audit timed out. Static checks are preserved; try scanning again."
+        logging.getLogger(__name__).warning("Rendered audit timed out during %s", stage)
+        report = unavailable(
+            f"The browser audit timed out during {stage}. Static checks are preserved; rendered checks remain unverified."
         )
+        if snapshot:
+            report["visual_audit"] = snapshot
+        return report
     except Exception:
         logging.getLogger(__name__).exception("Rendered accessibility audit failed")
         return unavailable(

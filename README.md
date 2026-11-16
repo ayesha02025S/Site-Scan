@@ -219,3 +219,5 @@ New scans capture a bounded JPEG of each audited page’s 1280 × 900 browser vi
 ### Partial browser audits
 
 Browser navigation waits for the HTML to be ready, then allows up to four seconds for remaining resources. Slow images and third-party requests no longer discard usable rendered findings. Incomplete loads remain partial, and the dashboard labels evaluated-check scores as partial instead of assigning a reassuring letter grade. A 100 on evaluated checks does not establish that unaudited checks pass. Screenshot markers are measured before and after capture; moving layouts are omitted rather than returning misplaced markers. Scanner version 3.3 starts a new comparison baseline.
+
+Rendered audits have a 60-second per-page budget within the website crawl limit. An initial screenshot is retained if later accessibility analysis times out; in that case the report explicitly leaves browser checks unverified and shows no confirmed markers.

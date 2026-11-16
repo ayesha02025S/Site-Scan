@@ -207,3 +207,21 @@ def test_loading_screen_does_not_pass_accessibility(monkeypatch):
     assert report["status"] == "unavailable"
     assert "loading screen" in report["message"]
     assert all(c["status"] == "inconclusive" for c in report["checks"])
+
+
+@pytest.mark.browser
+def test_audit_timeout_preserves_snapshot_without_claiming_passes(monkeypatch):
+    async def fetch_fixture(self, url):
+        return 200, {"Content-Type": "text/html"}, b'<html><body><main><h1>Visible content</h1><button>OK</button></main></body></html>'
+
+    async def timeout_axe(*args):
+        raise TimeoutError()
+
+    monkeypatch.setattr(SafeResources, "fetch", fetch_fixture)
+    monkeypatch.setattr("accessibility.run_axe", timeout_axe)
+    report = asyncio.run(audit_page("https://fixture.example/"))
+    assert report["status"] == "unavailable"
+    assert "accessibility checks" in report["message"]
+    assert all(c["status"] == "inconclusive" for c in report["checks"])
+    assert report["visual_audit"]["status"] == "completed"
+    assert report["visual_audit"]["highlights"] == []
